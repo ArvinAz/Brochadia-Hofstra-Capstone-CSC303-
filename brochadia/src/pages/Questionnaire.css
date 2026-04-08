@@ -1,0 +1,220 @@
+.questionnaire-page {
+  min-height: calc(100vh - 4rem);
+  padding: 6rem 1.5rem 3rem;
+}
+
+.questionnaire-shell {
+  max-width: 920px;
+  margin: 0 auto;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(232, 224, 213, 0.9);
+  border-radius: 24px;
+  padding: 2rem;
+  box-shadow: var(--shadow-card);
+}
+
+.questionnaire-header {
+  margin-bottom: 1.5rem;
+}
+
+.questionnaire-step {
+  margin: 0 0 0.4rem;
+  color: var(--color-terracotta);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.questionnaire-header h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  color: var(--color-teal-dark);
+}
+
+.questionnaire-subtitle {
+  margin: 0.75rem 0 0;
+  color: var(--color-ink-muted);
+  max-width: 560px;
+}
+
+.questionnaire-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem 1.25rem;
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(45, 90, 90, 0.08), rgba(201, 123, 90, 0.1)),
+    var(--color-cream);
+}
+
+.questionnaire-summary strong {
+  display: block;
+  color: var(--color-teal-dark);
+}
+
+.questionnaire-summary-label {
+  display: block;
+  margin-bottom: 0.2rem;
+  color: var(--color-ink-muted);
+  font-size: 0.85rem;
+}
+
+.questionnaire-error {
+  margin: 0 0 1rem;
+  color: #b42318;
+  font-size: 0.95rem;
+}
+
+.questionnaire-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.questionnaire-section {
+  padding: 1.5rem;
+  border: 1px solid var(--color-sand);
+  border-radius: 18px;
+  background: var(--color-white);
+}
+
+.questionnaire-section-copy h2 {
+  margin: 0;
+  color: var(--color-teal-dark);
+  font-size: 1.4rem;
+}
+
+.questionnaire-section-copy p {
+  margin: 0.4rem 0 1.25rem;
+  color: var(--color-ink-muted);
+}
+
+.questionnaire-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.85rem;
+}
+
+.questionnaire-option {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 68px;
+  padding: 1rem;
+  border: 1px solid var(--color-sand);
+  border-radius: 14px;
+  background: var(--color-cream);
+  color: var(--color-teal-dark);
+  font-weight: 600;
+  transition: transform 0.15s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.questionnaire-option:hover {
+  transform: translateY(-1px);
+  border-color: var(--color-terracotta);
+}
+
+.questionnaire-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.questionnaire-option--selected {
+  border-color: var(--color-teal);
+  background: linear-gradient(135deg, rgba(45, 90, 90, 0.12), rgba(201, 123, 90, 0.14));
+  box-shadow: var(--shadow-soft);
+}
+
+.questionnaire-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.questionnaire-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.questionnaire-field span {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.questionnaire-field input,
+.questionnaire-field select,
+.questionnaire-field textarea {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  font: inherit;
+  color: var(--color-ink);
+  background: var(--color-white);
+  border: 1px solid var(--color-sand);
+  border-radius: 10px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.questionnaire-field textarea {
+  resize: vertical;
+}
+
+.questionnaire-field input:focus,
+.questionnaire-field select:focus,
+.questionnaire-field textarea:focus {
+  outline: none;
+  border-color: var(--color-terracotta);
+  box-shadow: 0 0 0 3px rgba(201, 123, 90, 0.12);
+}
+
+.questionnaire-field--full {
+  grid-column: 1 / -1;
+}
+
+.questionnaire-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.questionnaire-back {
+  border: 1px solid var(--color-sand);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--color-ink);
+  padding: 0.85rem 1.2rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.questionnaire-back:hover {
+  border-color: var(--color-terracotta);
+  color: var(--color-terracotta);
+}
+
+@media (max-width: 720px) {
+  .questionnaire-shell {
+    padding: 1.25rem;
+    border-radius: 18px;
+  }
+
+  .questionnaire-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .questionnaire-actions {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+
+  .questionnaire-back,
+  .questionnaire-actions .btn-primary {
+    width: 100%;
+  }
+}

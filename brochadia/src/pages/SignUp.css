@@ -1,0 +1,81 @@
+.signup-page {
+  min-height: calc(100vh - 4rem);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 1.5rem 3rem;
+}
+
+.signup-container {
+  width: 100%;
+  max-width: 400px;
+}
+
+.signup-container h1 {
+  font-size: 1.75rem;
+  color: var(--color-teal-dark);
+  margin: 0 0 0.25rem;
+}
+
+.signup-subtitle {
+  color: var(--color-ink-muted);
+  margin: 0 0 2rem;
+  font-size: 0.95rem;
+}
+
+.signup-error {
+  margin: 0 0 1rem;
+  color: #b42318;
+  font-size: 0.95rem;
+}
+
+.signup-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.signup-form label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--color-ink);
+}
+
+.signup-form input {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  font-family: inherit;
+  font-size: 1rem;
+  border: 1px solid var(--color-sand);
+  border-radius: 8px;
+  background: var(--color-white);
+  color: var(--color-ink);
+  transition: border-color 0.2s ease;
+}
+
+.signup-form input::placeholder {
+  color: var(--color-ink-muted);
+  opacity: 0.7;
+}
+
+.signup-form input:focus {
+  outline: none;
+  border-color: var(--color-terracotta);
+}
+
+.signup-form .btn-primary {
+  margin-top: 0.5rem;
+  width: 100%;
+  padding: 0.875rem;
+}
+
+.signup-login {
+  margin-top: 1.5rem;
+  text-align: center;
+  font-size: 0.95rem;
+  color: var(--color-ink-muted);
+}
+
+.signup-login a {
+  font-weight: 500;
+}
