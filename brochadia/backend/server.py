@@ -1,5 +1,5 @@
 
-
+import random
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo.mongo_client import MongoClient
@@ -21,7 +21,7 @@ import json
 import asyncio
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
-from trip_Functions import  get_access_token, get_city_geocode, latLong_Agent
+from trip_Functions import get_access_token, get_city_geocode, latLong_Agent, convert_price_to_usd
 from travel_preference import analyze_text
 
 
@@ -39,11 +39,27 @@ print("Password:", password)
 uri = 'mongodb+srv://azad:'+password+'@dwcluster.2zyrq7o.mongodb.net/?appName=DWCluster'
 
 # Create a new client and connect to the server
-client = MongoClient(uri, server_api=ServerApi('1'))
+client = MongoClient(password, server_api=ServerApi('1'))
 mongoDB = client["Brochadia"]
 openAI_client = Swarm()
 session = requests.Session()
+access_token = get_access_token(session)
 experiences_collection = mongoDB["Experiences"]
+
+TOURISM_CONTINENT_PATH = Path(__file__).resolve().parent / "tourism_with_continent.csv"
+try:
+    tourism_continent_df = pd.read_csv(
+        TOURISM_CONTINENT_PATH,
+        usecols=["location", "continent"],
+    )
+    LOCATION_TO_CONTINENT = {
+        str(row["location"]).strip().lower(): str(row["continent"]).strip()
+        for _, row in tourism_continent_df.dropna(subset=["location", "continent"])
+        .drop_duplicates(subset=["location"])
+        .iterrows()
+    }
+except Exception:
+    LOCATION_TO_CONTINENT = {}
 
 def get_season(current_date=date.today()):
     """
@@ -134,6 +150,21 @@ def get_user_travel_preference(user_id):
 
     return user.get('travel_preference')
 
+
+def get_continent_for_location(location):
+    normalized_location = (location or "").strip()
+    if not normalized_location:
+        return None
+
+    trip = client.Brochadia.Trips.find_one(
+        {"location": normalized_location},
+        {"continent": 1},
+    )
+    if trip and trip.get("continent"):
+        return trip.get("continent")
+
+    return LOCATION_TO_CONTINENT.get(normalized_location.lower())
+
 @app.route('/save_trip', methods=['POST'])
 def save_Trip():
     data = request.get_json() or {}
@@ -200,8 +231,10 @@ def get_countries():
 
 @app.route('/trip', methods=['GET'])
 async def get_trip():
+    #access_token = get_access_token(session)
     occasion = request.args.get('trip_type')
     location = request.args.get('Country')
+    continent = get_continent_for_location(location)
     user_id = (request.args.get('userId') or request.args.get('user') or '').strip()
     user_travel_preference = get_user_travel_preference(user_id)
 
@@ -212,134 +245,157 @@ async def get_trip():
     trips = list(cursor)
     #print("TRIPS if they are empty", trips)
     if not trips:
-        print("Calling OpenSwarm AI")
+        #print("Calling OpenSwarm AI")
         season = get_season()
         ai_activities = []
-        submitTrips = []
-        try:
-            coords = latLong_Agent(location)
-            print("RESULTS FOR COORD", coords)
-            if len(coords) != 1:
-                coords = get_city_geocode(location, session)
-            print("These are the Coords")
-            if coords:
-                access_token = get_access_token(session)
-                session.headers.update({"Authorization": f"Bearer {access_token}"})
-                lat, lon = coords
-                raw_activities = get_activities(lat, lon)
-                #print("Raw Activities",raw_activities)
-                if isinstance(raw_activities, dict):
-                    raw_activities = raw_activities.get("data") or []
+        
+        
+        coords_for_trips = latLong_Agent(location)
+        #print("RESULTS FOR COORD", coords_for_trips)
+        if len(coords_for_trips) == 1:
+            coords_for_trips = [get_city_geocode(location, session)]
+        print("These are the Coords", len(coords_for_trips))
+        session.headers.update({"Authorization": f"Bearer {access_token}"})
+        if coords_for_trips:
+                # Get List of activities for each trip
+            for lat, lon in coords_for_trips:
+                try:
+                    print("Loop for ",lat, lon)
+                    
+                    raw_activities = get_activities(lat, lon)
+                    
+                    
+                    if isinstance(raw_activities, dict):
+                        raw_activities = raw_activities.get("data") or []
+                    print("Raw Activities",len(raw_activities))
+                    candidates = []
+                    for activity in raw_activities:
+                        #print("short",activity.get('shortDescription'), activity.get('description'))
+                        if not isinstance(activity, dict):
+                            continue
+                        candidates.append(
+                            {
+                                "id": activity.get("id"),
+                                "name": activity.get("name"),
+                                "shortDescription": activity.get('shortDescription') if  activity.get('shortDescription') else  activity.get('description'),
+                                "price": activity.get("price"),
+                                "price_USD": convert_price_to_usd(activity.get("price")),
+                                "pictures": activity.get("pictures"),
+                            }
+                        )
+                        
+                        if len(candidates) >= 30:
+                            # Pick a random 15 trips in the candidates
+                            candidates = random.sample(candidates, 15)
+                            print("Candidates shortened to",len(candidates))
+                            
+                    print("Current Activity",[candidate.get("shortDescription") for candidate in candidates])
+                    if candidates:
+                        selector_agent = Agent(
+                            name="Trip Activity Selector",
+                            instructions=(
+                                "You are a travel curator. From the provided activities list, select "
+                                "the best matches for the requested trip_type. If a user travel_preference "
+                                "dictionary is provided, read the shortDescription or description features to personalize the ranking toward liked "
+                                "items(items that are Greater than 0) and away from disliked ones(items that are Less than 0) Based on the shortDescription feature of each activity in activites. Return ONLY "
+                                "a JSON array of activity objects taken from the input list. Do not "
+                                "add new fields or commentary."
+                            ),
+                            output_type="json",
+                        )
+                        #print(json.dumps(user_travel_preference or {}))
+                        response = openAI_client.run(
+                            agent=selector_agent,
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        f"trip_type={occasion}, location={location}, season={season}, "
+                                        f"user_id={user_id or 'anonymous'}, "
+                                        f"user_travel_preference={json.dumps(user_travel_preference or {})}. "
+                                        f"activities={candidates}"
+                                    ),
+                                }
+                            ],
+                        )
+                        content = None
+                        if response and getattr(response, "messages", None):
+                            content = response.messages[-1].get("content")
+                            content = content.strip().removeprefix('json').removesuffix('').strip()
+                            
+                            
+                        if content:
+                            try:
+                                #print(content.split("```json")[-1].split("```")[0])
+                                content = content.split("```json")[-1].split("```")[0]
+                                ai_activities = json.loads(content)
+                                #print("AI ACTIVITIES", ai_activities)
+                            except Exception as e:
+                                print("ERROR 1",e)
+                                try:
+                                    ai_activities = ast.literal_eval(content)
+                                except Exception as e:
+                                    print("ERROR 2",e)
+                                    ai_activities = []
+                        #print("AI ACTIVITIES",ai_activities)
+                    if not ai_activities:
+                        ai_activities = candidates
+                except Exception as e:
+                    print("Error 3",e)
+                
+            
+                if ai_activities:
+                    activity_ids = []
+                    total_usd = 0.0
+                    for i, activity in enumerate(ai_activities):
+                        if not isinstance(activity, dict):
+                            continue
+                        print(i, activity.keys())
+                        activity_id = activity.get("id")
+                        if not activity_id:
+                            continue
 
-                candidates = []
-                for activity in raw_activities:
-                    if not isinstance(activity, dict):
-                        continue
-                    candidates.append(
+                        if activity.get("price_USD") is None:
+                            converted_price = convert_price_to_usd(activity.get("price"))
+                            if converted_price:
+                                try:
+                                    activity["price_USD"] = float(converted_price["amount"])
+                                except (TypeError, ValueError):
+                                    pass
+
+                        try:
+                            total_usd += float(activity.get("price_USD") or 0)
+                        except (TypeError, ValueError):
+                            print("TYPE OR VALUE ERROR")
+                            pass
+                        #print("ADDING ACTIVITY", activity)
+                        experiences_collection.update_one(
+                            {"id": activity_id},
+                            {"$setOnInsert": activity},
+                            upsert=True,
+                        )
+                        activity_ids.append(activity_id)
+                        # TODO: Change the groupsize
+                    trips.append(
                         {
-                            "id": activity.get("id"),
-                            "name": activity.get("name"),
-                            "shortDescription": activity.get("shortDescription"),
-                            "price": activity.get("price"),
-                            "price_USD": activity.get("price_USD"),
-                            "pictures": activity.get("pictures"),
+                            "user_id": user_id,
+                            "location": location,
+                            "continent": continent,
+                            "trip_type": occasion,
+                            "group_size": 1,
+                            "experiences": activity_ids,
                         }
                     )
-                    if len(candidates) >= 30:
-                        break
-
-                if candidates:
-                    selector_agent = Agent(
-                        name="Trip Activity Selector",
-                        instructions=(
-                            "You are a travel curator. From the provided activities list, select "
-                            "the best matches for the requested trip_type. If a user travel_preference "
-                            "dictionary is provided, use it to personalize the ranking toward liked "
-                            "items(items that are Greater than 0) and away from disliked ones(items that are Less than 0) Based on the shortDescription feature of each activity in activites. Return ONLY "
-                            "a JSON array of activity objects taken from the input list. Do not "
-                            "add new fields or commentary."
-                        ),
-                        output_type="json",
-                    )
-                    print(json.dumps(user_travel_preference or {}))
-                    response = openAI_client.run(
-                        agent=selector_agent,
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": (
-                                    f"trip_type={occasion}, location={location}, season={season}, "
-                                    f"user_id={user_id or 'anonymous'}, "
-                                    f"user_travel_preference={json.dumps(user_travel_preference or {})}. "
-                                    f"activities={candidates}"
-                                ),
-                            }
-                        ],
-                    )
-                    content = None
-                    if response and getattr(response, "messages", None):
-                        content = response.messages[-1].get("content")
-                        content = content.strip().removeprefix('json').removesuffix('').strip()
-                        
-                        
-                    if content:
-                        try:
-                            print(content.split("```json")[-1].split("```")[0])
-                            content = content.split("```json")[-1].split("```")[0]
-                            ai_activities = json.loads(content)
-                            #print("AI ACTIVITIES", ai_activities)
-                        except Exception as e:
-                            print("ERROR 1",e)
-                            try:
-                                ai_activities = ast.literal_eval(content)
-                            except Exception as e:
-                                print("ERROR 2",e)
-                                ai_activities = []
-                    #print("AI ACTIVITIES",ai_activities)
-                if not ai_activities:
-                    ai_activities = candidates
-        except Exception as e:
-            print(e)
-            ai_activities = []
-        print("test",type(ai_activities),ai_activities)
-        if ai_activities:
-            activity_ids = []
-            total_usd = 0.0
-            for i, activity in enumerate(ai_activities):
-                print(i, activity.keys())
-                if not isinstance(activity, dict):
-                    continue
-                activity_id = activity.get("id")
-                if not activity_id:
-                    continue
-
-                if "price_USD" not in activity and activity['price_USD'] is not None:
-                    price = activity.get("price") or {}
-                    currency = (price.get("currencyCode") or "").upper()
-                    if currency == "USD":
-                        try:
-                            activity["price_USD"] = float(price.get("amount"))
-                        except (TypeError, ValueError):
-                            pass
-
-                try:
-                    total_usd += float(activity.get("price_USD") or 0)
-                except (TypeError, ValueError):
-                    pass
-                print("ADDING ACTIVITY", activity)
-                experiences_collection.update_one(
-                    {"id": activity_id},
-                    {"$setOnInsert": activity},
-                    upsert=True,
-                )
-                activity_ids.append(activity_id)
-            trips = ai_activities
+                    if len(trips) != 0:
+                        print("GENERATED TRIPS Complete for", lat, lon, "Is complete")
+                # TODO Take each trip and create a Trip Document for each Generated Trips
 
         # return jsonify({'success': False, 'message': 'No trip for that country and preference was found'}), 404
 
         print('Trips for', location, 'with trip_type', occasion, ':', trips)
 
     # Convert ObjectId to string so JSON serialization works
+    submitTrips = []
     
     for trip in trips:
         experience_ids = trip.get("experiences") or []
