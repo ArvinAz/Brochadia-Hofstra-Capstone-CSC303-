@@ -21,7 +21,7 @@ import json
 import asyncio
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
-from trip_Functions import get_access_token, get_city_geocode, latLong_Agent, convert_price_to_usd
+from trip_Functions import get_access_token, get_city_geocode, latLong_Agent, convert_price_to_usd, extract_experiences, calculate_userPref_score
 from travel_preference import analyze_text
 
 
@@ -127,7 +127,10 @@ def get_user(user_id):
             'email': user.get('email'),
             'full_name': user.get('full_name'),
             'preferred_trip': user.get('preferred_trip'),
-            'travel_preference': user.get('travel_preference')
+            'travel_preference': user.get('travel_preference'),
+            'trip_history':  user.get('trip_history'),
+            'Saved_Trips_ID': user.get('Saved_Trips_ID'),
+            'location_preference':user.get('location_preference')
         },
     }), 200
 
@@ -147,7 +150,7 @@ def get_user_travel_preference(user_id):
     )
     if not user:
         return None
-
+    
     return user.get('travel_preference')
 
 
@@ -219,6 +222,60 @@ def save_Trip():
         'alreadySaved': already_saved,
     }), 200
 
+@app.route('/buy_trip', methods=['POST'])
+def buy_trip():
+    data = request.get_json() or {}
+    user_id = (data.get('userId') or '').strip()
+    trip_doc = data.get('trip')
+
+    if not user_id:
+        return jsonify({'success': False, 'message': 'userId is required'}), 400
+
+    if not isinstance(trip_doc, dict) or not trip_doc:
+        return jsonify({'success': False, 'message': 'trip is required'}), 400
+
+    try:
+        mongo_user_id = ObjectId(user_id)
+    except InvalidId:
+        return jsonify({'success': False, 'message': 'Invalid user id'}), 400
+
+    user = client.Brochadia.users.find_one({'_id': mongo_user_id}, {'_id': 1})
+    if not user:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+
+    trip_id = trip_doc.get('_id')
+    Trips = client.Brochadia.Trips
+
+    if trip_id:
+        try:
+            mongo_trip_id = ObjectId(trip_id)
+        except InvalidId:
+            mongo_trip_id = None
+
+        if mongo_trip_id and Trips.find_one({'_id': mongo_trip_id}, {'_id': 1}):
+            trip_id = str(mongo_trip_id)
+        else:
+            trip_insert_doc = dict(trip_doc)
+            trip_insert_doc.pop('_id', None)
+            insert_result = Trips.insert_one(trip_insert_doc)
+            trip_id = str(insert_result.inserted_id)
+    else:
+        insert_result = Trips.insert_one(dict(trip_doc))
+        trip_id = str(insert_result.inserted_id)
+
+    update_result = client.Brochadia.users.update_one(
+        {'_id': mongo_user_id},
+        {'$addToSet': {'Past_Trips_ID': trip_id}},
+    )
+
+    already_saved = update_result.modified_count == 0
+    return jsonify({
+        'success': True,
+        'message': 'Trip already saved' if already_saved else 'Trip saved successfully',
+        'tripId': trip_id,
+        'alreadySaved': already_saved,
+    }), 200
+
 @app.route('/countries', methods=['GET'])
 def get_countries():
     continent = request.args.get('continent')
@@ -234,10 +291,13 @@ async def get_trip():
     #access_token = get_access_token(session)
     occasion = request.args.get('trip_type')
     location = request.args.get('Country')
+    budget = float(request.args.get('budget'))
+    travel_date = request.args.get('travelDate')
+    travel_days = request.args.get('travelDays')
     continent = get_continent_for_location(location)
     user_id = (request.args.get('userId') or request.args.get('user') or '').strip()
     user_travel_preference = get_user_travel_preference(user_id)
-
+    print(type(travel_date))
     if not occasion or not location:
         return jsonify({'success': False, 'message': 'Provide trip_type and Country query params'}), 400
 
@@ -289,7 +349,7 @@ async def get_trip():
                             candidates = random.sample(candidates, 15)
                             print("Candidates shortened to",len(candidates))
                             
-                    print("Current Activity",[candidate.get("shortDescription") for candidate in candidates])
+                    print("Current Activity",len([candidate.get("shortDescription") for candidate in candidates]))
                     if candidates:
                         selector_agent = Agent(
                             name="Trip Activity Selector",
@@ -310,7 +370,7 @@ async def get_trip():
                                 {
                                     "role": "user",
                                     "content": (
-                                        f"trip_type={occasion}, location={location}, season={season}, "
+                                        f"location={location}, season={season}, "
                                         f"user_id={user_id or 'anonymous'}, "
                                         f"user_travel_preference={json.dumps(user_travel_preference or {})}. "
                                         f"activities={candidates}"
@@ -323,7 +383,7 @@ async def get_trip():
                             content = response.messages[-1].get("content")
                             content = content.strip().removeprefix('json').removesuffix('').strip()
                             
-                            
+                        print("CONTENT", content)
                         if content:
                             try:
                                 #print(content.split("```json")[-1].split("```")[0])
@@ -343,31 +403,43 @@ async def get_trip():
                 except Exception as e:
                     print("Error 3",e)
                 
-            
+                #Sort by amount in price feature
+                if occasion == "Backpacking":
+                    ai_activities = sorted(ai_activities, key=lambda x: float(x['price_USD']))
+                else:
+                    ai_activities = sorted(ai_activities, key=lambda x: float(x['price_USD']), reverse=True)
+
                 if ai_activities:
                     activity_ids = []
                     total_usd = 0.0
+                    
                     for i, activity in enumerate(ai_activities):
+                        
                         if not isinstance(activity, dict):
                             continue
-                        print(i, activity.keys())
+                        print(i, activity.get("price_USD") is None)
                         activity_id = activity.get("id")
                         if not activity_id:
                             continue
 
                         if activity.get("price_USD") is None:
                             converted_price = convert_price_to_usd(activity.get("price"))
+                            
                             if converted_price:
                                 try:
-                                    activity["price_USD"] = float(converted_price["amount"])
+                                    activity["price_USD"] = float(converted_price)
                                 except (TypeError, ValueError):
+                                    print("TYPE OR VALUE ERROR 0")
                                     pass
-
+                        print("USD DOllars", float(budget), total_usd > budget,activity.get("price_USD"), type(activity.get("price_USD")))
                         try:
-                            total_usd += float(activity.get("price_USD") or 0)
+                            total_usd += activity.get("price_USD")
+                            
+                            if total_usd > budget:
+                                break
                         except (TypeError, ValueError):
-                            print("TYPE OR VALUE ERROR")
-                            pass
+                            print("TYPE OR VALUE ERROR 1")
+                            continue
                         #print("ADDING ACTIVITY", activity)
                         experiences_collection.update_one(
                             {"id": activity_id},
@@ -375,7 +447,9 @@ async def get_trip():
                             upsert=True,
                         )
                         activity_ids.append(activity_id)
-                        # TODO: Change the groupsize
+
+                        
+                        
                     trips.append(
                         {
                             "user_id": user_id,
@@ -393,6 +467,28 @@ async def get_trip():
         # return jsonify({'success': False, 'message': 'No trip for that country and preference was found'}), 404
 
         print('Trips for', location, 'with trip_type', occasion, ':', trips)
+    else:
+        # If trips were found similar to the database
+        trip_copy = []
+        for trip in trips:
+            trip_exp = extract_experiences(trip)
+            # Use the $in operator to find all documents matching any ID in the list at once
+            query = {"id": {"$in": trip_exp}}
+    
+            # Execute the query and convert the MongoDB cursor directly to a Python list
+            found_documents = list(experiences_collection.find(query))
+            #print("FOUNDED DOCUMENTS",found_documents)
+            
+            
+            
+            doc_score = calculate_userPref_score(user_travel_preference, found_documents)
+            
+            if doc_score >= 0:
+                trip_copy.append(trip)
+        trips = trip_copy
+                
+
+
 
     # Convert ObjectId to string so JSON serialization works
     submitTrips = []
@@ -700,7 +796,7 @@ async def signup():
     }), 201
 
 @app.route('/login', methods=['POST'])
-def login(client: MongoClient):
+def login():
     data = request.get_json() or {}
     email = data.get('email')
     password = data.get('password')
