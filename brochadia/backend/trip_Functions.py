@@ -13,6 +13,7 @@ import geopy
 from geopy.geocoders import Nominatim
 from swarm import Swarm, Agent
 import json
+import ast
 
 
 
@@ -80,6 +81,110 @@ def get_city_geocode(city: str, session: requests.Session):
     if not location:
         return None
     return location.latitude, location.longitude
+
+
+def extract_experiences(mongo_doc):
+    """
+    Extracts the 'experiences' feature from a MongoDB document and converts 
+    a stringified list of numbers into an actual Python list of numbers.
+    
+    Args:
+        mongo_doc (dict or object): The MongoDB document instance.
+        
+    Returns:
+        list: A Python list of numbers (ints or floats). Returns an empty list if missing or invalid.
+    """
+    # 1. Safely extract the feature whether the doc is a dictionary or an object
+    if isinstance(mongo_doc, dict):
+        
+        experiences_str = mongo_doc.get("experiences")
+        
+    else:
+        experiences_str = getattr(mongo_doc, "experiences", None)
+        
+    # Check if the feature exists and is actually a string
+    return experiences_str
+    if not experiences_str or not isinstance(experiences_str, str):
+        return []
+
+    # 2. Try to safely evaluate strings that are formatted as Python/JSON lists (e.g., "[1, 2, 3]")
+    try:
+        parsed_data = ast.literal_eval(experiences_str)
+        
+        # Make sure the evaluated data is a list
+        if isinstance(parsed_data, list):
+            return parsed_data
+        elif isinstance(parsed_data, (int, float)): 
+            # In case the string was just a single number like "1"
+            return [parsed_data]
+            
+    except (ValueError, SyntaxError):
+        # If ast.literal_eval fails, pass and move to the manual fallback
+        pass
+
+    # 3. Fallback: Manually parse strings that are just comma-separated (e.g., "1, 2.5, 3")
+    try:
+        # Strip any extraneous brackets just in case
+        cleaned_str = experiences_str.strip("[]")
+        
+        if not cleaned_str.strip():
+            return []
+            
+        result_list = []
+        for val in cleaned_str.split(','):
+            val = val.strip()
+            # Convert to float if it has a decimal, otherwise int
+            if '.' in val:
+                result_list.append(float(val))
+            else:
+                result_list.append(int(val))
+                
+        return experiences_str
+        
+    except ValueError:
+        # If all conversions fail (e.g., the string contains letters), return an empty list
+        return []
+
+#For Existing Trips
+def calculate_userPref_score(user_dict, trip_Activities, feature_name="text"):
+    """
+    Calculates a total score based on the occurrence of dictionary words within a list of objects.
+    
+    Args:
+        word_dict (dict): A dictionary where keys are words and values are ints (-1 to 1).
+        objects_list (list): A list of objects (or dictionaries) containing the string feature.
+        feature_name (str): The name of the attribute or key that holds the string feature.
+        
+    Returns:
+        int: The total calculated score.
+    """
+    total_score = 0
+    for obj in trip_Activities:
+        # Extract the string feature whether the object is a dictionary or a class instance
+
+        if isinstance(obj, dict):
+            text = obj.get("shortDescription", "")
+        else:
+            text = getattr(obj, "shortDescription", "")
+            
+        # Ensure the feature is actually a string before processing
+        if not isinstance(text, str):
+            continue
+            
+        # Split the text into words and convert to lowercase for uniform matching
+        words = text.lower().split()
+        for word in words:
+            # Strip basic punctuation to ensure "word," or "word!" matches "word" in the dict
+            clean_word = word.strip(".,!?\"'()[]{}")
+            
+            # If the cleaned word is in our dictionary, add its value to the total score
+            print("USER DICT",user_dict)
+            print(clean_word in user_dict)
+            if clean_word in user_dict:
+                total_score += user_dict[clean_word]
+    
+    return total_score
+
 
 
 def _get_usd_exchange_rate(currency_code: str):
