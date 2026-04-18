@@ -35,7 +35,6 @@ AMA_SEC = os.getenv("VITE_AMA_API_SEC")
 app = Flask(__name__)
 CORS(app)
 password = os.getenv('VITE_MONGO_PASSWORD')
-print("Password:", password)
 uri = 'mongodb+srv://azad:'+password+'@dwcluster.2zyrq7o.mongodb.net/?appName=DWCluster'
 
 # Create a new client and connect to the server
@@ -114,7 +113,15 @@ def get_user(user_id):
 
     user = client.Brochadia.users.find_one(
         {'_id': mongo_user_id},
-        {'email': 1, 'full_name': 1, 'preferred_trip': 1, 'travel_preference': 1},
+        {
+            'email': 1,
+            'full_name': 1,
+            'preferred_trip': 1,
+            'travel_preference': 1,
+            'trip_history': 1,
+            'Saved_Trips_ID': 1,
+            'location_preference': 1,
+        },
     )
     
     if not user:
@@ -167,6 +174,113 @@ def get_continent_for_location(location):
         return trip.get("continent")
 
     return LOCATION_TO_CONTINENT.get(normalized_location.lower())
+
+
+def get_trip_document_by_id(trip_id):
+    normalized_trip_id = str(trip_id or '').strip()
+    if not normalized_trip_id:
+        return None
+
+    try:
+        mongo_trip_id = ObjectId(normalized_trip_id)
+    except InvalidId:
+        return None
+
+    temp_trip = client.Brochadia.Temp_Trips.find_one({'_id': mongo_trip_id})
+    if temp_trip:
+        return temp_trip
+
+    return client.Brochadia.Trips.find_one({'_id': mongo_trip_id})
+
+
+def serialize_trip_document(trip):
+    if not trip:
+        return None
+
+    trip_payload = dict(trip)
+    experience_ids = trip_payload.get("experiences") or []
+    query = {"id": {"$in": experience_ids}}
+    activities = list(
+        experiences_collection.find(
+            query, {"_id": 0, "id": 1, "name": 1, "price_USD": 1, "pictures": 1}
+        )
+    )
+
+    total_usd = 0.0
+    for act in activities:
+        try:
+            total_usd += float(act.get("price_USD") or 0)
+        except (TypeError, ValueError):
+            pass
+
+    if "_id" in trip_payload:
+        trip_payload["_id"] = str(trip_payload["_id"])
+
+    trip_payload["activities"] = activities
+    trip_payload["activities_total_usd"] = round(total_usd, 2)
+    return trip_payload
+
+
+@app.route('/saved_trips', methods=['POST'])
+def get_saved_trips():
+    data = request.get_json() or {}
+    trip_ids = data.get('tripIds')
+
+    if not isinstance(trip_ids, list):
+        return jsonify({'success': False, 'message': 'tripIds must be an array'}), 400
+
+    trips = []
+    for trip_id in trip_ids:
+        trip = get_trip_document_by_id(trip_id)
+        trip_payload = serialize_trip_document(trip)
+        if trip_payload:
+            trips.append(trip_payload)
+
+    return jsonify({'success': True, 'trips': trips}), 200
+
+
+@app.route('/unsave_trip', methods=['POST'])
+def unsave_trip():
+    data = request.get_json() or {}
+    user_id = str(data.get('userId') or '').strip()
+    trip_id = str(data.get('tripId') or '').strip()
+
+    if not user_id:
+        return jsonify({'success': False, 'message': 'userId is required'}), 400
+
+    if not trip_id:
+        return jsonify({'success': False, 'message': 'tripId is required'}), 400
+
+    try:
+        mongo_user_id = ObjectId(user_id)
+    except InvalidId:
+        return jsonify({'success': False, 'message': 'Invalid user id'}), 400
+
+    user = client.Brochadia.users.find_one({'_id': mongo_user_id}, {'_id': 1})
+    if not user:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+
+    update_result = client.Brochadia.users.update_one(
+        {'_id': mongo_user_id},
+        {'$pull': {'Saved_Trips_ID': trip_id}},
+    )
+
+    removed_from_temp = False
+    try:
+        mongo_trip_id = ObjectId(trip_id)
+    except InvalidId:
+        mongo_trip_id = None
+
+    if mongo_trip_id:
+        delete_result = client.Brochadia.Temp_Trips.delete_one({'_id': mongo_trip_id})
+        removed_from_temp = delete_result.deleted_count > 0
+
+    return jsonify({
+        'success': True,
+        'message': 'Trip removed from saved trips',
+        'removedFromUser': update_result.modified_count > 0,
+        'removedFromTemp': removed_from_temp,
+    }), 200
 
 @app.route('/save_trip', methods=['POST'])
 def save_Trip():
@@ -490,32 +604,12 @@ async def get_trip():
 
 
 
-    # Convert ObjectId to string so JSON serialization works
     submitTrips = []
-    
+
     for trip in trips:
-        experience_ids = trip.get("experiences") or []
-        query = {"id": {"$in": experience_ids}}
-        activities = list(
-            experiences_collection.find(
-                query, {"_id": 0, "id": 1, "name": 1, "price_USD": 1, "pictures": 1}
-            )
-        )
-
-        total_usd = 0.0
-        for act in activities:
-            try:
-                total_usd += float(act.get("price_USD") or 0)
-            except (TypeError, ValueError):
-                pass
-
-        if "_id" in trip:
-            trip["_id"] = str(trip["_id"])
-
-        trip_payload = dict(trip)
-        trip_payload["activities"] = activities
-        trip_payload["activities_total_usd"] = round(total_usd, 2)
-        submitTrips.append(trip_payload)
+        trip_payload = serialize_trip_document(trip)
+        if trip_payload:
+            submitTrips.append(trip_payload)
     print(submitTrips)
     return jsonify({"success": True, "trips": submitTrips})
 
