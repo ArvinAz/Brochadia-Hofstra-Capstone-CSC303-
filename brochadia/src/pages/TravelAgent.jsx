@@ -22,7 +22,12 @@ function TravelAgent({ isLoggedIn }) {
   const [selected, setSelected] = useState(null)
   const [countriesForSelected, setCountriesForSelected] = useState([])
   const [selectedCountry, setSelectedCountry] = useState(null)
+  const [tripBudget, setTripBudget] = useState('')
+  const [tripDate, setTripDate] = useState('')
+  const [tripDays, setTripDays] = useState('')
   const [tripsForCountry, setTripsForCountry] = useState([])
+  const [hasFetchedTrips, setHasFetchedTrips] = useState(false)
+  const [isLoadingTrips, setIsLoadingTrips] = useState(false)
   const [expandedTripId, setExpandedTripId] = useState(null)
   const [saveTripStatusById, setSaveTripStatusById] = useState({})
 
@@ -70,7 +75,12 @@ function TravelAgent({ isLoggedIn }) {
   const getCountries = async (continentLabel) => {
     setSelected(continentLabel)
     setSelectedCountry(null)
+    setTripBudget('')
+    setTripDate('')
+    setTripDays('')
     setTripsForCountry([])
+    setHasFetchedTrips(false)
+    setIsLoadingTrips(false)
     setExpandedTripId(null)
 
     try {
@@ -85,14 +95,38 @@ function TravelAgent({ isLoggedIn }) {
     }
   }
 
-  const getTrips = async (country) => {
+  const selectCountry = (country) => {
     setSelectedCountry(country)
+    setTripBudget('')
+    setTripDate('')
+    setTripDays('')
+    setTripsForCountry([])
+    setHasFetchedTrips(false)
     setExpandedTripId(null)
+  }
+
+  const canFetchTrips =
+    Boolean(selectedCountry) &&
+    tripBudget.trim() !== '' &&
+    tripDate !== '' &&
+    tripDays.trim() !== ''
+
+  const getTrips = async () => {
+    if (!canFetchTrips) {
+      return
+    }
+
+    setExpandedTripId(null)
+    setHasFetchedTrips(true)
+    setIsLoadingTrips(true)
     try {
       const userId = getStoredUserId()
       const params = new URLSearchParams({
         trip_type: trip_pref,
-        Country: country,
+        Country: selectedCountry,
+        budget: tripBudget,
+        travelDate: tripDate,
+        travelDays: tripDays,
       })
 
       if (userId) {
@@ -101,11 +135,13 @@ function TravelAgent({ isLoggedIn }) {
 
       const res = await fetch(`http://127.0.0.1:5000/trip?${params.toString()}`)
       const json = await res.json()
-      console.log('Trips response for', country, json)
+      console.log('Trips response for', selectedCountry, json)
       setTripsForCountry(json.trips ?? [])
     } catch (err) {
       console.error('Failed to load trips', err)
       setTripsForCountry([])
+    } finally {
+      setIsLoadingTrips(false)
     }
   }
 
@@ -123,6 +159,38 @@ function TravelAgent({ isLoggedIn }) {
 
     try {
       const res = await fetch('http://127.0.0.1:5000/save_trip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, trip }),
+      })
+      const json = await res.json()
+
+      if (!res.ok || !json.success) {
+        throw new Error(json.message || 'Failed to save trip')
+      }
+
+      setSaveTripStatusById((curr) => ({ ...curr, [tripKey]: 'saved' }))
+      console.log(json.message || 'Trip saved successfully', json.tripId ?? tripKey)
+    } catch (err) {
+      console.error('Failed to save trip', err)
+      setSaveTripStatusById((curr) => ({ ...curr, [tripKey]: 'error' }))
+    }
+  }
+
+  const buyTrip = async (trip) => {
+    const userId = getStoredUserId()
+    const tripKey = getTripKey(trip)
+
+    if (!userId) {
+      console.error('Cannot save trip without a logged-in user')
+      setSaveTripStatusById((curr) => ({ ...curr, [tripKey]: 'error' }))
+      return
+    }
+
+    setSaveTripStatusById((curr) => ({ ...curr, [tripKey]: 'saving' }))
+
+    try {
+      const res = await fetch('http://127.0.0.1:5000/buy_trip', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, trip }),
@@ -190,7 +258,7 @@ function TravelAgent({ isLoggedIn }) {
                       key={country}
                       type="button"
                       className="country-chip"
-                      onClick={() => getTrips(country)}
+                      onClick={() => selectCountry(country)}
                     >
                       {country}
                     </button>
@@ -200,8 +268,56 @@ function TravelAgent({ isLoggedIn }) {
 
               {selectedCountry && (
                 <div className="country-list">
+                  <h2>Plan a trip to {selectedCountry}</h2>
+                  <div className="trip-planner">
+                    <div className="trip-planner__grid">
+                      <label className="trip-planner__field">
+                        <span>Budget</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={tripBudget}
+                          onChange={(e) => setTripBudget(e.target.value)}
+                          placeholder="2500"
+                        />
+                      </label>
+                      <label className="trip-planner__field">
+                        <span>Travel date</span>
+                        <input
+                          type="date"
+                          value={tripDate}
+                          onChange={(e) => setTripDate(e.target.value)}
+                        />
+                      </label>
+                      <label className="trip-planner__field">
+                        <span>Days</span>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={tripDays}
+                          onChange={(e) => setTripDays(e.target.value)}
+                          placeholder="7"
+                        />
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      className="trip-planner__submit"
+                      disabled={!canFetchTrips || isLoadingTrips}
+                      onClick={getTrips}
+                    >
+                      {isLoadingTrips ? 'Loading Trips...' : 'Find Trips'}
+                    </button>
+                  </div>
+
                   <h2>Experiences in {selectedCountry}</h2>
-                  {tripsForCountry.length === 0 ? (
+                  {!hasFetchedTrips ? (
+                    <p className="selection-message selection-message--muted">
+                      Enter your budget, travel date, and number of days to load trips.
+                    </p>
+                  ) : tripsForCountry.length === 0 ? (
                     <p className="selection-message selection-message--muted">
                       No trips found yet for this country.
                     </p>
@@ -324,6 +440,7 @@ function TravelAgent({ isLoggedIn }) {
                                     className="purchase-button"
                                     onClick={(e) => {
                                       e.stopPropagation()
+                                      buyTrip(trip)
                                       console.log('Purchase trip', trip._id)
                                     }}
                                   >
