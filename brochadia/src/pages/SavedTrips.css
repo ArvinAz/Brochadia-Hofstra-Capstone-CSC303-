@@ -1,0 +1,51 @@
+.saved-trips-page {
+  padding: 6rem 0 4rem;
+}
+
+.saved-trips-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.saved-trips-list {
+  display: grid;
+  gap: 1rem;
+}
+
+.saved-trips-status {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 1rem 1.1rem;
+  border-radius: 18px;
+  border: 1px solid var(--color-sand);
+  background: var(--color-white);
+  box-shadow: var(--shadow-soft);
+  text-align: center;
+}
+
+.saved-trips-status--error {
+  margin-bottom: 1rem;
+  border-color: rgba(201, 123, 90, 0.35);
+  background: rgba(201, 123, 90, 0.08);
+}
+
+.unsave-trip-button {
+  padding: 0.75rem 1.05rem;
+  border-radius: 12px;
+  border: 1px solid rgba(201, 123, 90, 0.35);
+  background: rgba(201, 123, 90, 0.12);
+  color: var(--color-terracotta-dark);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.unsave-trip-button:hover {
+  filter: brightness(0.98);
+  transform: translateY(-1px);
+}
+
+.unsave-trip-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
