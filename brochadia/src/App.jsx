@@ -5,6 +5,7 @@ import SignUp from './pages/SignUp'
 import Login from './pages/Login'
 import TravelAgent from './pages/TravelAgent'
 import Questionnaire from './pages/Questionnaire'
+import SavedTrips from './pages/SavedTrips'
 import './App.css'
 import { clearStoredUserId, getStoredUserId } from './utils/authStorage'
 
@@ -51,6 +52,7 @@ function App() {
         <Route path="/signup" element={<SignUp />} />
         <Route path="/signup/questionnaire" element={<Questionnaire onSignupSuccess={() => setIsLoggedIn(true)} />} />
         <Route path="/travel-agent" element={<TravelAgent isLoggedIn={isLoggedIn} />} />
+        <Route path="/saved-trips" element={<SavedTrips isLoggedIn={isLoggedIn} />} />
         
       </Routes>
 
