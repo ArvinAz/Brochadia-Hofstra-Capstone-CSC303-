@@ -121,6 +121,61 @@
   box-shadow: none;
 }
 
+.trip-type-filter {
+  max-width: 980px;
+  margin: 0 auto 1rem;
+  padding: 1rem 1.1rem;
+  border-radius: 18px;
+  border: 1px solid var(--color-sand);
+  background: var(--color-white);
+  box-shadow: var(--shadow-soft);
+}
+
+.trip-type-filter__label {
+  margin: 0 0 0.85rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--color-ink);
+  text-align: left;
+}
+
+.trip-type-filter__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.trip-type-chip {
+  padding: 0.65rem 1rem;
+  border-radius: 999px;
+  border: 1px solid var(--color-sand);
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.15s ease,
+    box-shadow 0.2s ease;
+}
+
+.trip-type-chip:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-soft);
+}
+
+.trip-type-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.trip-type-chip--active {
+  background: var(--color-teal-dark);
+  border-color: var(--color-teal-dark);
+  color: var(--color-white);
+}
+
 .country-chips {
   display: flex;
   flex-wrap: wrap;
@@ -373,4 +428,3 @@
     height: 190px;
   }
 }
-

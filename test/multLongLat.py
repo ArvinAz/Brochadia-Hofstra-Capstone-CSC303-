@@ -96,6 +96,8 @@ def get_all_user_travel_preferences():
         client.close()
 
 
+
+
 if __name__ == "__main__":
     data = get_all_user_travel_preferences()
     points = []

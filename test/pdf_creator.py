@@ -15,7 +15,7 @@ from bson.objectid import ObjectId
 app = Flask(__name__)
 
 
-save_name = os.path.join(os.path.expanduser("~"), "Desktop/Hofstra/Brochadia/test/pdf_editor/pdfs", "SASD.pdf")
+
 
 #fs = gridfs.GridFS(db)
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import './TravelAgent.css'
 import './SavedTrips.css'
 import { getStoredUserId } from '../utils/authStorage'
@@ -96,12 +97,30 @@ function SavedTrips({ isLoggedIn }) {
     return `https://picsum.photos/seed/${seed}/600/400`
   }
 
-  const getTripKey = (trip) =>
-    trip._id ?? `${trip.location ?? 'trip'}-${trip.trip_type ?? 'trip'}-${trip.season ?? 'season'}`
+  const getTripKey = (trip, index = 0) => {
+    if (trip?._id) {
+      return trip._id
+    }
 
-  const unsaveTrip = async (trip) => {
+    const activityKey = (trip?.activities ?? trip?.experiences ?? [])
+      .map((activity) =>
+        typeof activity === 'string'
+          ? activity
+          : activity?.id ?? activity?.name ?? 'activity',
+      )
+      .join('-')
+
+    return [
+      trip?.location ?? 'trip',
+      trip?.trip_type ?? 'trip',
+      trip?.season ?? 'season',
+      activityKey || 'activities',
+      index,
+    ].join('-')
+  }
+
+  const unsaveTrip = async (trip, tripKey = getTripKey(trip)) => {
     const userId = getStoredUserId()
-    const tripKey = getTripKey(trip)
 
     if (!userId || !trip._id) {
       setUnsaveTripStatusById((curr) => ({ ...curr, [tripKey]: 'error' }))
@@ -122,7 +141,9 @@ function SavedTrips({ isLoggedIn }) {
         throw new Error(json.message || 'Failed to unsave trip')
       }
 
-      setSavedTrips((curr) => curr.filter((savedTrip) => getTripKey(savedTrip) !== tripKey))
+      setSavedTrips((curr) =>
+        curr.filter((savedTrip, index) => getTripKey(savedTrip, index) !== tripKey),
+      )
       setExpandedTripId((curr) => (curr === tripKey ? null : curr))
       setErrorMessage('')
     } catch (err) {
@@ -132,9 +153,8 @@ function SavedTrips({ isLoggedIn }) {
     }
   }
 
-  const buyTrip = async (trip) => {
+  const buyTrip = async (trip, tripKey = getTripKey(trip)) => {
     const userId = getStoredUserId()
-    const tripKey = getTripKey(trip)
 
     if (!userId) {
       setPurchaseTripStatusById((curr) => ({ ...curr, [tripKey]: 'error' }))
@@ -163,15 +183,15 @@ function SavedTrips({ isLoggedIn }) {
     }
   }
 
-  const getUnsaveTripLabel = (trip) => {
-    const status = unsaveTripStatusById[getTripKey(trip)]
+  const getUnsaveTripLabel = (trip, tripKey = getTripKey(trip)) => {
+    const status = unsaveTripStatusById[tripKey]
     if (status === 'removing') return 'Removing...'
     if (status === 'error') return 'Retry Remove'
     return 'Unsave Trip'
   }
 
-  const getPurchaseTripLabel = (trip) => {
-    const status = purchaseTripStatusById[getTripKey(trip)]
+  const getPurchaseTripLabel = (trip, tripKey = getTripKey(trip)) => {
+    const status = purchaseTripStatusById[tripKey]
     if (status === 'saving') return 'Purchasing...'
     if (status === 'saved') return 'Trip Purchased'
     if (status === 'error') return 'Retry Purchase'
@@ -186,6 +206,9 @@ function SavedTrips({ isLoggedIn }) {
           <p className="section-subtitle">
             Review the trips you saved and remove any you no longer want to keep.
           </p>
+          <Link to="/saved-trips/pdf" className="saved-trips-link-button">
+            Open Your PDF
+          </Link>
         </header>
 
         {errorMessage && (
@@ -204,8 +227,8 @@ function SavedTrips({ isLoggedIn }) {
           </div>
         ) : (
           <section className="saved-trips-list" aria-label="Saved trips">
-            {savedTrips.map((trip) => {
-              const tripKey = getTripKey(trip)
+            {savedTrips.map((trip, index) => {
+              const tripKey = getTripKey(trip, index)
               const isExpanded = expandedTripId === tripKey
               const unsaveStatus = unsaveTripStatusById[tripKey]
               const purchaseStatus = purchaseTripStatusById[tripKey]
@@ -300,10 +323,10 @@ function SavedTrips({ isLoggedIn }) {
                           disabled={unsaveStatus === 'removing'}
                           onClick={(e) => {
                             e.stopPropagation()
-                            unsaveTrip(trip)
+                            unsaveTrip(trip, tripKey)
                           }}
                         >
-                          {getUnsaveTripLabel(trip)}
+                          {getUnsaveTripLabel(trip, tripKey)}
                         </button>
                         <button
                           type="button"
@@ -311,10 +334,10 @@ function SavedTrips({ isLoggedIn }) {
                           disabled={purchaseStatus === 'saving' || purchaseStatus === 'saved'}
                           onClick={(e) => {
                             e.stopPropagation()
-                            buyTrip(trip)
+                            buyTrip(trip, tripKey)
                           }}
                         >
-                          {getPurchaseTripLabel(trip)}
+                          {getPurchaseTripLabel(trip, tripKey)}
                         </button>
                       </div>
                     </div>

@@ -6,6 +6,11 @@ import spacy
 import textacy
 nlp = spacy.load("en_core_web_sm")
 import re
+from nltk.tokenize import word_tokenize
+import nltk
+
+nltk.download('punkt_tab')
+nltk.download('averaged_perceptron_tagger_eng')
 
 positive_words = [
     # Verbs
@@ -163,29 +168,15 @@ def analyze_text(text, user_pref=None, country_Pref=None):
             check_word(ent.text, text, user_pref)
             
     country_Pref = deepcopy(user_pref)
-    print("Country Pref:", country_Pref)
+    
 
-    for chunk in travelDoc.noun_chunks:
-        print("Noun Chunk: ", str(chunk))
-        if str(chunk) in travel_companions:
-            continue
-        # Pass user_pref into the check_word function
-        check_word(str(chunk), text, user_pref)
+    tagged_words = word_tokenize(text)
+    tagged_words = nltk.pos_tag(tagged_words)
+    for word, tag in tagged_words:
+        if tag.startswith('NN'):
+            check_word(word, text, user_pref)
 
-    # Searching Verbs
-    patterns = [{"POS": "VERB"}]
+    
 
-    about_talk_doc = textacy.make_spacy_doc(
-            text, lang="en_core_web_sm"
-    )
-    verb_phrases = textacy.extract.token_matches(
-            about_talk_doc, patterns=patterns
-    )
-
-    for chunk in verb_phrases:
-        if chunk.text.lower() in positive_words or chunk.text.lower() in negative_words:
-            continue
-        # Pass user_pref into the check_word function
-        check_word(chunk.text, text, user_pref)
         
     return deepcopy(user_pref), deepcopy(country_Pref)

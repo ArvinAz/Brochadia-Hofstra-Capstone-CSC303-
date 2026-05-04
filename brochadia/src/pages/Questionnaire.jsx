@@ -94,7 +94,7 @@ function Questionnaire({ onSignupSuccess }) {
       clearSignupDraft()
       storeUserId(json.userId)
       if (onSignupSuccess) onSignupSuccess()
-      navigate('/')
+      navigate('/signup/your_pdf', { state: { userId: json.userId } })
     } catch (err) {
       setError('Network error while completing signup')
     } finally {

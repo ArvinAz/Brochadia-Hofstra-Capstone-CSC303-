@@ -1,6 +1,7 @@
 
 import random
-from flask import Flask, request, jsonify
+from pdf_funcs import create_Resume, modify_resume as rebuild_resume_pdf
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from pymongo.mongo_client import MongoClient
 from pymongo.server_api import ServerApi
@@ -21,9 +22,25 @@ import json
 import asyncio
 from bson.objectid import ObjectId
 from bson.errors import InvalidId
-from trip_Functions import get_access_token, get_city_geocode, latLong_Agent, convert_price_to_usd, extract_experiences, calculate_userPref_score
+from trip_Functions import get_access_token, get_city_geocode, latLong_Agent, convert_price_to_usd, extract_experiences, calculate_userPref_score, single_userPref_score, get_random_coordinates
 from travel_preference import analyze_text
 
+from multiprocessing.connection import Client
+import gridfs.errors
+import bson.errors
+
+
+import os
+import gridfs
+from pymongo import MongoClient
+from pdf2image import convert_from_bytes
+import hashlib
+from pymongo.server_api import ServerApi
+from reportlab.pdfgen.canvas import Canvas
+from reportlab.lib.units import cm, inch
+from reportlab.lib import colors
+from flask import Flask, request, jsonify
+from bson.objectid import ObjectId
 
 # Load .env from project root (brochadia/.env)
 load_dotenv(Path(__file__).resolve().parent.parent / '.env')
@@ -44,6 +61,17 @@ openAI_client = Swarm()
 session = requests.Session()
 access_token = get_access_token(session)
 experiences_collection = mongoDB["Experiences"]
+
+# Path to save File
+save_name = os.path.join(os.path.expanduser("~"), "Desktop/Hofstra/Brochadia/brochadia/src/documents", "SASD.pdf")
+fs = gridfs.GridFS(mongoDB)
+
+def calculate_hash(content):
+    md5 = hashlib.md5()
+    md5.update(content)
+    return md5.hexdigest()
+
+
 
 TOURISM_CONTINENT_PATH = Path(__file__).resolve().parent / "tourism_with_continent.csv"
 try:
@@ -89,6 +117,13 @@ def get_season(current_date=date.today()):
     else:   
         return "Unknown"
 
+fs = gridfs.GridFS(mongoDB)
+
+def calculate_hash(content):
+    md5 = hashlib.md5()
+    md5.update(content)
+    return md5.hexdigest()
+
 
 # Send a ping to confirm a successful connection
 try:
@@ -103,16 +138,234 @@ except Exception as e:
 print("Today's Season", get_season())
 
 
+@app.route('/upload/<customer_id>', methods=['POST'])
+def upload_pdf(customer_id):
+    try:
+        #print(userCollection)
+        # 1. Basic Flask file validation
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part in the request'}), 400
+            
+        pdf_file = request.files['file']
+        if pdf_file.filename == '':
+            return jsonify({'error': 'No selected file'}), 400
+
+        # 2. Read content once for hashing and GridFS storage
+        pdf_content = pdf_file.read()
+        pdf_hash = calculate_hash(pdf_content)
+        
+        # 3. Check for duplicates specifically inside this user's document
+        # This looks for a document with the matching userId that already has this hash in its 'files' array
+        existing_file = client.Brochadia.users.find_one({
+            'userId': ObjectId(customer_id), 
+            'files.hash': pdf_hash
+        })
+        
+        if existing_file:
+            return jsonify({'message': 'Duplicate PDF file detected for this user'}), 409
+        
+        # 4. Insert the PDF file content into GridFS
+        file_id = fs.put(pdf_content, filename=pdf_file.filename)
+        print(file_id)
+        # 5. Insert metadata into the specific customer's document using $push
+        metadata = {
+            'filename': pdf_file.filename,
+            'hash': pdf_hash,
+            'file_id': file_id,
+            'user_id': customer_id
+        }
+        #print("Customer_ID",ObjectId(customer_id))
+        # Update the document matching the userId by appending to the 'files' array
+        update_result = client.Brochadia.users.update_one(
+            {'_id': ObjectId(customer_id)},
+            {'$push': {'files': metadata}}
+        )
+        
+        # 6. Safety check: Ensure the user actually existed
+        if update_result.matched_count == 0:
+            # If the user doesn't exist, you might want to delete the orphaned file from GridFS here
+            fs.delete(file_id)
+            return jsonify({'error': 'User not found'}), 404
+        
+        return jsonify({'message': 'PDF file uploaded successfully'}), 201
+        
+    except Exception as e:
+        print(e)
+        return jsonify({'error': str(e)}), 500
+
+def get_file_id_by_name(customer_id, target_filename="file.pdf"):
+    """
+    Retrieves the GridFS file_id for a specific file owned by a user.
+    """
+    try:
+        # 1. Find the user AND the specific file in one query
+        user_doc = client.Brochadia.users.find_one(
+            {
+                '_id': ObjectId(customer_id),
+                'files.filename': target_filename
+            },
+            {
+                # 2. Projection: Return ONLY the array item that matched
+                'files.$': 1, 
+                '_id': 0
+            }
+        )
+        print("ID",user_doc['files'][0]['file_id'])
+        # 3. Check if we actually found a match
+        if user_doc and 'files' in user_doc:
+            # Extract the file_id from the single returned array item
+            return user_doc['files'][0]['file_id']
+            
+        # Return None if the user doesn't exist or the file wasn't found
+        return None
+        
+    except Exception as e:
+        print(f"Database error: {e}")
+        return None
+
+@app.route('/download/<user_id>', methods=['GET'])
+def download_resume(user_id, file_name="file.pdf"):
+    print("file_name",file_name)
+    print("user_id",user_id)
+    try:
+        # 1. Convert the string file_id from the URL into a MongoDB ObjectId
+        try:
+            file_id = get_file_id_by_name(user_id, file_name)
+
+            obj_id = ObjectId(file_id)
+        except bson.errors.InvalidId:
+            return jsonify({'error': 'Invalid file ID format'}), 400
+
+        # 2. Ask GridFS for the file
+        try:
+            grid_out = fs.get(obj_id)
+            #grid_out = fs.find_one({"files_id": obj_id})
+        except gridfs.errors.NoFile:
+            print("File not found")
+            return jsonify({'error': 'File not found'}), 404
+
+        '''
+        save_directory = 'Desktop/Hofstra/Brochadia/brochadia/src/documents'
+
+    # 2. Make sure the directory actually exists (creates it if it doesn't)
+        #os.makedirs(save_directory, exist_ok=True)
+
+        # 3. Create the full file path (e.g., 'src/documents/myfile.pdf')
+        file_path = os.path.join(save_directory, grid_out.filename)
+
+        with open(file_path, 'wb') as f:
+            f.write(grid_out.read())
+        
+        '''
+        # 3. Send the file-like object directly to the client
+        
+        return send_file(
+            grid_out,
+            mimetype='application/pdf',
+            as_attachment=False,          # Set to True to force a file download
+            download_name=grid_out.filename # Preserves the original filename
+        )
+
+    except Exception as e:
+        print(e)
+        return jsonify({'error': str(e)}), 500
+
+def display_resume(user_id):
+    pdf = download_resume(user_id)
+
+
+    # 4. Read the data from grid_out and write it to the physical file
+    return pdf
+
+
+def regenerate_resume_for_user(
+    user_id,
+    file_name="file.pdf",
+    review_data=None,
+    description=None,
+    rating=None,
+):
+    mongo_user_id = normalize_object_id(user_id)
+    if not mongo_user_id:
+        raise ValueError('Invalid user id')
+
+    file_id = get_file_id_by_name(user_id, file_name)
+    if not file_id:
+        raise FileNotFoundError('File not found')
+
+    try:
+        obj_id = ObjectId(file_id)
+    except bson.errors.InvalidId as exc:
+        raise ValueError('Invalid file ID format') from exc
+
+    user = get_user_document(
+        user_id,
+        {
+            '_id': 1,
+            'full_name': 1,
+            'email': 1,
+            'preferred_trip': 1,
+            'trip_history': 1,
+            'travel_history': 1,
+            'travel_preference': 1,
+            'location_preference': 1,
+            'Saved_Trips_ID': 1,
+            'Past_Trips_ID': 1,
+            'files': 1,
+        },
+    )
+    if not user:
+        raise LookupError('User not found')
+
+    updated_file = rebuild_resume_pdf(
+        user,
+        obj_id,
+        fs,
+        file_name=file_name,
+        review_data=review_data,
+        description=description,
+        rating=rating,
+    )
+
+    metadata_update = client.Brochadia.users.update_one(
+        {
+            '_id': mongo_user_id,
+            'files.filename': file_name,
+        },
+        {
+            '$set': {
+                'files.$.file_id': updated_file['file_id'],
+                'files.$.hash': updated_file['hash'],
+                'files.$.user_id': user_id,
+            }
+        },
+    )
+    if metadata_update.matched_count == 0:
+        client.Brochadia.users.update_one(
+            {'_id': mongo_user_id},
+            {
+                '$push': {
+                    'files': {
+                        'filename': file_name,
+                        'hash': updated_file['hash'],
+                        'file_id': updated_file['file_id'],
+                        'user_id': user_id,
+                    }
+                }
+            },
+        )
+
+    return updated_file
+
 
 @app.route('/users/<user_id>', methods=['GET'])
 def get_user(user_id):
-    try:
-        mongo_user_id = ObjectId(user_id)
-    except InvalidId:
+    mongo_user_id = normalize_object_id(user_id)
+    if not mongo_user_id:
         return jsonify({'success': False, 'message': 'Invalid user id'}), 400
 
-    user = client.Brochadia.users.find_one(
-        {'_id': mongo_user_id},
+    user = get_user_document(
+        user_id,
         {
             'email': 1,
             'full_name': 1,
@@ -142,19 +395,35 @@ def get_user(user_id):
     }), 200
 
 
+def normalize_object_id(value):
+    normalized_value = str(value or '').strip()
+    if not normalized_value:
+        return None
+
+    try:
+        return ObjectId(normalized_value)
+    except InvalidId:
+        return None
+
+
+def get_user_document(user_id, projection=None):
+    mongo_user_id = normalize_object_id(user_id)
+    
+    if not mongo_user_id:
+        return None
+
+    return client.Brochadia.users.find_one({'_id': mongo_user_id}, projection)
+
+
 def get_user_travel_preference(user_id):
     if not user_id:
         return None
 
-    try:
-        mongo_user_id = ObjectId(user_id)
-    except InvalidId:
-        return None
-
-    user = client.Brochadia.users.find_one(
-        {'_id': mongo_user_id},
+    user = get_user_document(
+        user_id,
         {'travel_preference': 1},
     )
+    print(user_id, user) 
     if not user:
         return None
     
@@ -191,6 +460,30 @@ def get_trip_document_by_id(trip_id):
         return temp_trip
 
     return client.Brochadia.Trips.find_one({'_id': mongo_trip_id})
+
+
+def build_trip_history_entry(trip_id):
+    trip = get_trip_document_by_id(trip_id)
+    trip_payload = serialize_trip_document(trip) or {}
+    budget_usd = trip_payload.get("budget_usd")
+
+    if budget_usd is None:
+        budget_usd = trip_payload.get("activities_total_usd")
+
+    trip_history_entry = {
+        "trip_id": trip_id,
+        "location": trip_payload.get("location"),
+        "continent": trip_payload.get("continent"),
+        "trip_type": trip_payload.get("trip_type"),
+        "group_size": trip_payload.get("group_size"),
+        "season": trip_payload.get("season"),
+        "budget_usd": budget_usd,
+        "activities_total_usd": trip_payload.get("activities_total_usd"),
+        "experiences": trip_payload.get("experiences") or [],
+        "purchased_at": datetime.datetime.utcnow().isoformat(),
+    }
+
+    return {key: value for key, value in trip_history_entry.items() if value is not None}
 
 
 def serialize_trip_document(trip):
@@ -348,12 +641,11 @@ def buy_trip():
     if not isinstance(trip_doc, dict) or not trip_doc:
         return jsonify({'success': False, 'message': 'trip is required'}), 400
 
-    try:
-        mongo_user_id = ObjectId(user_id)
-    except InvalidId:
+    mongo_user_id = normalize_object_id(user_id)
+    if not mongo_user_id:
         return jsonify({'success': False, 'message': 'Invalid user id'}), 400
 
-    user = client.Brochadia.users.find_one({'_id': mongo_user_id}, {'_id': 1})
+    user = get_user_document(user_id, {'_id': 1, 'trip_history': 1})
     if not user:
         return jsonify({'success': False, 'message': 'User not found'}), 404
 
@@ -377,17 +669,127 @@ def buy_trip():
         insert_result = Trips.insert_one(dict(trip_doc))
         trip_id = str(insert_result.inserted_id)
 
-    update_result = client.Brochadia.users.update_one(
-        {'_id': mongo_user_id},
-        {'$addToSet': {'Past_Trips_ID': trip_id}},
+
+    trip_history_entry = build_trip_history_entry(trip_id)
+    trip_history_update = client.Brochadia.users.update_one(
+        {
+            '_id': mongo_user_id,
+        },
+        {'$push': {'trip_history': trip_history_entry}},
     )
 
-    already_saved = update_result.modified_count == 0
+
     return jsonify({
         'success': True,
-        'message': 'Trip already saved' if already_saved else 'Trip saved successfully',
-        'tripId': trip_id,
-        'alreadySaved': already_saved,
+        'message': 'Trip purchased successfully',
+        'tripId': trip_id,        
+    }), 200
+
+
+@app.route('/review_trip', methods=['POST'])
+def review_Trip():
+    data = request.get_json() or {}
+    user_id = (data.get('userId') or '').strip()
+    trip_id = str(data.get('trip_id') or '').strip()
+    description = str(data.get('description') or '').strip()
+    rating = data.get('rating')
+
+    if not user_id:
+        return jsonify({'success': False, 'message': 'userId is required'}), 400
+
+    if not trip_id:
+        return jsonify({'success': False, 'message': 'trip_id is required'}), 400
+
+    if not description:
+        return jsonify({'success': False, 'message': 'description is required'}), 400
+
+    try:
+        rating = int(rating)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'rating must be an integer from 1 to 5'}), 400
+
+    if rating < 1 or rating > 5:
+        return jsonify({'success': False, 'message': 'rating must be an integer from 1 to 5'}), 400
+
+    mongo_user_id = normalize_object_id(user_id)
+    if not mongo_user_id:
+        return jsonify({'success': False, 'message': 'Invalid user id'}), 400
+
+    user = get_user_document(
+        user_id,
+        {
+            'trip_history': 1,
+            'travel_preference': 1,
+            'location_preference': 1,
+        },
+    )
+    if not user:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+
+    trip_history = user.get('trip_history') or []
+    matching_trip = next(
+        (
+            trip
+            for trip in trip_history
+            if str(trip.get('trip_id') or '').strip() == trip_id
+        ),
+        None,
+    )
+    if not matching_trip:
+        return jsonify({'success': False, 'message': 'Trip not found in user trip history'}), 404
+
+    updated_travel_preference, updated_location_preference = analyze_text(
+        description,
+        user.get('travel_preference') or {},
+        user.get('location_preference') or {},
+    )
+
+    update_result = client.Brochadia.users.update_one(
+        {
+            '_id': mongo_user_id # 1. Find the user unconditionally
+        },
+        {
+            '$set': {
+                # 2. Use a named identifier (e.g., $[trip]) instead of the standard $
+                'trip_history.$[trip].review_rating': rating,
+                'trip_history.$[trip].review_description': description,
+                'trip_history.$[trip].reviewed_at': datetime.datetime.utcnow().isoformat(),
+                
+                # 3. These will now update NO MATTER WHAT
+                'travel_preference': updated_travel_preference,
+                'location_preference': updated_location_preference,
+            }
+        },
+        # 4. Define what the $[trip] identifier actually means
+        array_filters=[{'trip.trip_id': trip_id}] 
+    )
+
+    if update_result.matched_count == 0:
+        return jsonify({'success': False, 'message': 'Trip review could not be saved'}), 404
+
+    try:
+        updated_resume = regenerate_resume_for_user(
+            user_id,
+            review_data=data,
+            description=description,
+            rating=rating,
+        )
+    except (FileNotFoundError, LookupError) as e:
+        return jsonify({'success': False, 'message': str(e)}), 404
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)}), 400
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Review saved but resume update failed: {e}'}), 500
+
+    return jsonify({
+        'success': True,
+        'message': 'Trip review saved successfully',
+        'trip_id': trip_id,
+        'rating': rating,
+        'description': description,
+        'travel_preference': updated_travel_preference,
+        'location_preference': updated_location_preference,
+        'resume_file_id': str(updated_resume['file_id']),
     }), 200
 
 @app.route('/countries', methods=['GET'])
@@ -411,7 +813,7 @@ async def get_trip():
     continent = get_continent_for_location(location)
     user_id = (request.args.get('userId') or request.args.get('user') or '').strip()
     user_travel_preference = get_user_travel_preference(user_id)
-    print(type(travel_date))
+    print("User travel dict", user_travel_preference)
     if not occasion or not location:
         return jsonify({'success': False, 'message': 'Provide trip_type and Country query params'}), 400
 
@@ -423,8 +825,13 @@ async def get_trip():
         season = get_season()
         ai_activities = []
         
+        try:
+            coords_for_trips = get_random_coordinates(location)
         
-        coords_for_trips = latLong_Agent(location)
+        except Exception as e:
+            # Fallbackxwx
+            print("ERROR WITH AI GEN LATLONG", e)
+            coords_for_trips = latLong_Agent(location)
         #print("RESULTS FOR COORD", coords_for_trips)
         if len(coords_for_trips) == 1:
             coords_for_trips = [get_city_geocode(location, session)]
@@ -457,12 +864,29 @@ async def get_trip():
                                 "pictures": activity.get("pictures"),
                             }
                         )
+
+
                         
-                        if len(candidates) >= 30:
-                            # Pick a random 15 trips in the candidates
-                            candidates = random.sample(candidates, 15)
-                            print("Candidates shortened to",len(candidates))
-                            
+                        
+
+                    if len(candidates) >= 30:
+                        
+                        new_candidates = []
+                        for can in candidates:
+                            pers_score = single_userPref_score(user_travel_preference, can)
+                            if pers_score >= 0:
+                                new_candidates.append((pers_score, can))
+                        
+                        
+                        
+                        new_candidates = sorted(new_candidates, key=lambda x: x[0], reverse=True)
+
+                        print("Candidates shortened to",len(new_candidates))
+                        new_candidates = [activity[1] for  activity in new_candidates]
+                        # Get the top 20 ACtivities that have the highest personalized score
+                        candidates = new_candidates[0:15]
+                        print("Candidates shortened to",len(candidates))       
+                     
                     print("Current Activity",len([candidate.get("shortDescription") for candidate in candidates]))
                     if candidates:
                         selector_agent = Agent(
@@ -472,7 +896,7 @@ async def get_trip():
                                 "the best matches for the requested trip_type. If a user travel_preference "
                                 "dictionary is provided, read the shortDescription or description features to personalize the ranking toward liked "
                                 "items(items that are Greater than 0) and away from disliked ones(items that are Less than 0) Based on the shortDescription feature of each activity in activites. Return ONLY "
-                                "a JSON array of activity objects taken from the input list. Do not "
+                                "a JSON array of activity objects taken from the input list. Do not modify existing fields or"
                                 "add new fields or commentary."
                             ),
                             output_type="json",
@@ -882,6 +1306,12 @@ async def signup():
     }
 
     result = client.Brochadia.users.insert_one(new_user)
+
+    new_user["_id"] = result.inserted_id
+    print(new_user["_id"])
+    create_Resume(new_user, "file.pdf")
+
+    
     
     return jsonify({
         'success': True,

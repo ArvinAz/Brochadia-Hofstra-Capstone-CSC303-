@@ -1,4 +1,5 @@
 import { Routes, Route, Link, useNavigate } from 'react-router-dom'
+import PdfDisplayPage from './pages/your_pdf';
 import { useState } from 'react'
 import HomePage from './pages/HomePage'
 import SignUp from './pages/SignUp'
@@ -6,6 +7,8 @@ import Login from './pages/Login'
 import TravelAgent from './pages/TravelAgent'
 import Questionnaire from './pages/Questionnaire'
 import SavedTrips from './pages/SavedTrips'
+import SavedTripsPdfRedirect from './pages/SavedTripsPdfRedirect'
+import ReviewTrip from './pages/ReviewTrip'
 import './App.css'
 import { clearStoredUserId, getStoredUserId } from './utils/authStorage'
 
@@ -51,8 +54,12 @@ function App() {
         <Route path="/login" element={<Login onLoginSuccess={() => setIsLoggedIn(true)} />} />
         <Route path="/signup" element={<SignUp />} />
         <Route path="/signup/questionnaire" element={<Questionnaire onSignupSuccess={() => setIsLoggedIn(true)} />} />
+        <Route path="/signup/your_pdf" element={<PdfDisplayPage />} />
+        <Route path="/your_pdf" element={<PdfDisplayPage />} />
         <Route path="/travel-agent" element={<TravelAgent isLoggedIn={isLoggedIn} />} />
         <Route path="/saved-trips" element={<SavedTrips isLoggedIn={isLoggedIn} />} />
+        <Route path="/saved-trips/pdf" element={<SavedTripsPdfRedirect />} />
+        <Route path="/review/:tripId" element={<ReviewTrip />} />
         
       </Routes>
 

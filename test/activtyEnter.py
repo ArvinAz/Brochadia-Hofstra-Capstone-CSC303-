@@ -10,24 +10,25 @@ from pymongo import UpdateOne
 from swarm import Swarm, Agent
 from typing import List
 import ast
-
+import random 
+import time
 import asyncio
 import geopy
 from geopy.geocoders import Nominatim
-
+import json
 
 
 
 # Load .env from project root (brochadia/.env)
-load_dotenv(Path(__file__).resolve().parent.parent / '.env')
+load_dotenv('.env')
 
-MONGO_PASSWORD = os.getenv("VITE_MONGO_PASSWORD")
+#MONGO_PASSWORD = os.getenv("VITE_MONGO_PASSWORD")
 AMA_KEY = os.getenv("VITE_AMA_API_KEY")
 AMA_SEC = os.getenv("VITE_AMA_API_SEC")
 
 client = Swarm()
 
-uri = f"mongodb+srv://azad:{MONGO_PASSWORD}@dwcluster.2zyrq7o.mongodb.net/?appName=DWCluster"
+uri = os.getenv("VITE_MONGO_PASSWORD")
 clientdb = MongoClient(uri, server_api=ServerApi('1'))
 db = clientdb["Brochadia"]
 trips_collection = db["Trips"]
@@ -88,7 +89,8 @@ def get_city_geocode(city: str):
 def get_activities(lat: float, lon: float):
     url = "https://test.api.amadeus.com/v1/shopping/activities"
     response = session.get(url, params={"latitude": lat, "longitude": lon, "radius": 1})
-    if response.status_code == 429:
+    if response.status_code == 429 or response.status_code != 200:
+        return []
         return {"data":[
             {
                 "id": "dummy-activity-1",
@@ -138,7 +140,8 @@ def check_budget(activities, budget):
 
 
 
-def fill_missing_experiences():
+def fill_missing_experiences(trip_id=None):
+
     access_token = get_access_token()
     session.headers.update({"Authorization": f"Bearer {access_token}"})
 
@@ -151,10 +154,14 @@ def fill_missing_experiences():
     }
 
     trips_by_group = {}
-    cursor = trips_collection.find(
-        missing_query,
-        {"location": 1, "trip_type": 1, "season": 1, "budget_usd": 1},
-    )
+    if trip_id == None:
+        cursor = trips_collection.find(
+            missing_query,
+            {"location": 1, "trip_type": 1, "season": 1, "budget_usd": 1},
+        )
+    else:
+        cursor = trips_collection.find({'id':trip_id})
+
     for trip in cursor:
         location = trip.get("location")
         if not location:
@@ -198,7 +205,7 @@ def fill_missing_experiences():
 
             global sugg_activities
             sugg_activities = get_activities(lat, lon)
-            print(sugg_activities)
+            print("Activities Found", len(sugg_activities))
             if (
                 not sugg_activities
                 or (
@@ -208,30 +215,37 @@ def fill_missing_experiences():
             ):
                 print("no activities")
                 continue
+            
+            if len(sugg_activities) > 15:
+                sugg_activities = random.sample(sugg_activities, 15)
+
+                
+                
 
             #TODO: Have Swarm read each Activities short Description for the most expensive Trip
+            time.sleep(20)
             response = client.run(
                 agent=classifier_agent,
                 messages=[{
                     "role": "user", 
                     "content": f"Here is the raw data: {sugg_activities}. Please filter for a {_season} {_trip_type} trip on a {trip_docs[0]['budget_usd']} budget."
+                    
                 }]
             )
             #TODO: Get rid of all cheap Trips if the trip type isn't Backpacking
 
             activities = ast.literal_eval(response.messages[1]['content'])
-            print(type(activities),activities)
+
 
             # Insert Activities found in Experiences Collection
             activity_ids = []
             for activity in activities:
-                print(activity)
-                print(type(activity))
+
                 activity_id = activity.get("id")
                 if not activity_id:
                     continue
                 activity_ids.append(activity_id)
-                print("First",activity_id)
+
                 experiences_collection.update_one(
                     {"id": activity_id},
                     {"$setOnInsert": activity},
@@ -243,15 +257,15 @@ def fill_missing_experiences():
 
             for i, trip_doc in enumerate(trip_docs):
                 activity_ids = cutActivities(activities, _trip_type, trip_doc['budget_usd'])
-                print(i, activity_ids)
+
                 trip_ops.append(
                     UpdateOne({"_id": trip_doc["_id"]}, {"$set": {"experiences": activity_ids}})
                 )
 
         if trip_ops:
             trips_collection.bulk_write(trip_ops, ordered=False)
-    except Exception:
-        print("ERROR")
+    except Exception as e:
+        print("ERROR", e)
         if trip_ops:
             trips_collection.bulk_write(trip_ops, ordered=False)
         return
@@ -295,7 +309,7 @@ def cutActivities(activities, trip_type, budget):
 # Used to search which activities
 def suggestActivities(filtered_activities: list[dict], trip_type, season, budget):
     print(f"\n--- Saving Recommendations for {season} {trip_type} ({budget}) ---")
-
+    print(filtered_activities)
     exchange_rates = {
         "USD": 1.00,
         "EUR": 1.09,
@@ -306,7 +320,18 @@ def suggestActivities(filtered_activities: list[dict], trip_type, season, budget
     #actual_python_list = json.loads(filtered_activities)
     
     # Now it is a real Python list! (<class 'list'>)
-    filtered_activities = ast.literal_eval(filtered_activities)
+    try:
+        filtered_activities = json.loads(filtered_activities
+        )
+    #print("AI ACTIVITIES", ai_activities)
+    except Exception as e:
+        print("ERROR 1",e)
+        try:
+            filtered_activities = ast.literal_eval(filtered_activities)
+        except Exception as e:
+            print("ERROR 2",e)
+            return []
+    
     print(type(filtered_activities))
     print("FILTERED ACTIVITIES", filtered_activities, len(filtered_activities))
     for act in filtered_activities:
@@ -338,7 +363,10 @@ classifier_agent = Agent(
     Filter all the values of the activities in Python object format that strongly match the requested trip_type and season.
     Once you have your filtered list, call the `suggestActivities` tool to save your final recommendations.""",
         functions=[suggestActivities],
+        output_type="json",
     )
+
+
 
 if __name__ == "__main__":
     fill_missing_experiences()

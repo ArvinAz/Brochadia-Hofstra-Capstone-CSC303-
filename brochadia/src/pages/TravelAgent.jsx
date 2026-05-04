@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import './TravelAgent.css'
 import { getStoredUserId } from '../utils/authStorage'
 
 const DEFAULT_TRIP_PREF = 'Leisure'
+const TRIP_TYPES = ['Leisure', 'Cultural', 'Honeymoon', 'Adventure', 'Business']
 
 const CONTINENTS = [
   'Africa',
@@ -18,6 +20,7 @@ const CONTINENTS = [
 }))
 
 function TravelAgent({ isLoggedIn }) {
+  const navigate = useNavigate()
   const [trip_pref, setTripPref] = useState(DEFAULT_TRIP_PREF)
   const [selected, setSelected] = useState(null)
   const [countriesForSelected, setCountriesForSelected] = useState([])
@@ -26,10 +29,12 @@ function TravelAgent({ isLoggedIn }) {
   const [tripDate, setTripDate] = useState('')
   const [tripDays, setTripDays] = useState('')
   const [tripsForCountry, setTripsForCountry] = useState([])
+  const [activeTripType, setActiveTripType] = useState(DEFAULT_TRIP_PREF)
   const [hasFetchedTrips, setHasFetchedTrips] = useState(false)
   const [isLoadingTrips, setIsLoadingTrips] = useState(false)
   const [expandedTripId, setExpandedTripId] = useState(null)
   const [saveTripStatusById, setSaveTripStatusById] = useState({})
+  const [purchaseTripStatusById, setPurchaseTripStatusById] = useState({})
 
   useEffect(() => {
     const userId = getStoredUserId()
@@ -62,6 +67,12 @@ function TravelAgent({ isLoggedIn }) {
     loadPreferredTrip()
   }, [isLoggedIn])
 
+  useEffect(() => {
+    if (!hasFetchedTrips) {
+      setActiveTripType(trip_pref)
+    }
+  }, [trip_pref, hasFetchedTrips])
+
   const getActivityImageUrl = (act) => {
     const first = Array.isArray(act?.pictures) ? act.pictures[0] : null
     if (typeof first === 'string' && first.trim().length > 0) return first
@@ -69,8 +80,27 @@ function TravelAgent({ isLoggedIn }) {
     return `https://picsum.photos/seed/${seed}/600/400`
   }
 
-  const getTripKey = (trip) =>
-    trip._id ?? `${trip.location ?? 'trip'}-${trip.trip_type ?? 'trip'}-${trip.season ?? 'season'}`
+  const getTripKey = (trip, index = 0) => {
+    if (trip?._id) {
+      return trip._id
+    }
+
+    const activityKey = (trip?.activities ?? trip?.experiences ?? [])
+      .map((activity) =>
+        typeof activity === 'string'
+          ? activity
+          : activity?.id ?? activity?.name ?? 'activity',
+      )
+      .join('-')
+
+    return [
+      trip?.location ?? 'trip',
+      trip?.trip_type ?? 'trip',
+      trip?.season ?? 'season',
+      activityKey || 'activities',
+      index,
+    ].join('-')
+  }
 
   const getCountries = async (continentLabel) => {
     setSelected(continentLabel)
@@ -79,6 +109,7 @@ function TravelAgent({ isLoggedIn }) {
     setTripDate('')
     setTripDays('')
     setTripsForCountry([])
+    setActiveTripType(trip_pref)
     setHasFetchedTrips(false)
     setIsLoadingTrips(false)
     setExpandedTripId(null)
@@ -101,6 +132,7 @@ function TravelAgent({ isLoggedIn }) {
     setTripDate('')
     setTripDays('')
     setTripsForCountry([])
+    setActiveTripType(trip_pref)
     setHasFetchedTrips(false)
     setExpandedTripId(null)
   }
@@ -111,18 +143,24 @@ function TravelAgent({ isLoggedIn }) {
     tripDate !== '' &&
     tripDays.trim() !== ''
 
-  const getTrips = async () => {
+  const getTrips = async (tripTypeArg) => {
     if (!canFetchTrips) {
       return
     }
 
+    const tripType =
+      typeof tripTypeArg === 'string' && tripTypeArg.trim() !== ''
+        ? tripTypeArg
+        : activeTripType
+
     setExpandedTripId(null)
     setHasFetchedTrips(true)
     setIsLoadingTrips(true)
+    setActiveTripType(tripType)
     try {
       const userId = getStoredUserId()
       const params = new URLSearchParams({
-        trip_type: trip_pref,
+        trip_type: tripType,
         Country: selectedCountry,
         budget: tripBudget,
         travelDate: tripDate,
@@ -145,9 +183,8 @@ function TravelAgent({ isLoggedIn }) {
     }
   }
 
-  const saveTrip = async (trip) => {
+  const saveTrip = async (trip, tripKey = getTripKey(trip)) => {
     const userId = getStoredUserId()
-    const tripKey = getTripKey(trip)
 
     if (!userId) {
       console.error('Cannot save trip without a logged-in user')
@@ -177,17 +214,16 @@ function TravelAgent({ isLoggedIn }) {
     }
   }
 
-  const buyTrip = async (trip) => {
+  const buyTrip = async (trip, tripKey = getTripKey(trip)) => {
     const userId = getStoredUserId()
-    const tripKey = getTripKey(trip)
 
     if (!userId) {
-      console.error('Cannot save trip without a logged-in user')
-      setSaveTripStatusById((curr) => ({ ...curr, [tripKey]: 'error' }))
+      console.error('Cannot purchase trip without a logged-in user')
+      setPurchaseTripStatusById((curr) => ({ ...curr, [tripKey]: 'error' }))
       return
     }
 
-    setSaveTripStatusById((curr) => ({ ...curr, [tripKey]: 'saving' }))
+    setPurchaseTripStatusById((curr) => ({ ...curr, [tripKey]: 'saving' }))
 
     try {
       const res = await fetch('http://127.0.0.1:5000/buy_trip', {
@@ -198,23 +234,40 @@ function TravelAgent({ isLoggedIn }) {
       const json = await res.json()
 
       if (!res.ok || !json.success) {
-        throw new Error(json.message || 'Failed to save trip')
+        throw new Error(json.message || 'Failed to purchase trip')
       }
 
-      setSaveTripStatusById((curr) => ({ ...curr, [tripKey]: 'saved' }))
-      console.log(json.message || 'Trip saved successfully', json.tripId ?? tripKey)
+      const purchasedTripId = json.tripId ?? trip._id ?? tripKey
+      setPurchaseTripStatusById((curr) => ({ ...curr, [tripKey]: 'saved' }))
+      console.log(json.message || 'Trip purchased successfully', purchasedTripId)
+      navigate(`/review/${encodeURIComponent(purchasedTripId)}`, {
+        state: {
+          trip: {
+            ...trip,
+            _id: purchasedTripId,
+          },
+        },
+      })
     } catch (err) {
-      console.error('Failed to save trip', err)
-      setSaveTripStatusById((curr) => ({ ...curr, [tripKey]: 'error' }))
+      console.error('Failed to purchase trip', err)
+      setPurchaseTripStatusById((curr) => ({ ...curr, [tripKey]: 'error' }))
     }
   }
 
-  const getSaveTripLabel = (trip) => {
-    const status = saveTripStatusById[getTripKey(trip)]
+  const getSaveTripLabel = (trip, tripKey = getTripKey(trip)) => {
+    const status = saveTripStatusById[tripKey]
     if (status === 'saving') return 'Saving...'
     if (status === 'saved') return 'Trip Saved'
     if (status === 'error') return 'Retry Save'
     return 'Save Trip'
+  }
+
+  const getPurchaseTripLabel = (trip, tripKey = getTripKey(trip)) => {
+    const status = purchaseTripStatusById[tripKey]
+    if (status === 'saving') return 'Purchasing...'
+    if (status === 'saved') return 'Trip Purchased'
+    if (status === 'error') return 'Retry Purchase'
+    return 'Purchase this trip'
   }
 
   //const getTrips = async
@@ -317,141 +370,166 @@ function TravelAgent({ isLoggedIn }) {
                     <p className="selection-message selection-message--muted">
                       Enter your budget, travel date, and number of days to load trips.
                     </p>
-                  ) : tripsForCountry.length === 0 ? (
-                    <p className="selection-message selection-message--muted">
-                      No trips found yet for this country.
-                    </p>
                   ) : (
                     <div>
-                      {tripsForCountry.map((trip) => {
-                        const tripKey = getTripKey(trip)
-                        const isExpanded = expandedTripId === tripKey
-                        const saveStatus = saveTripStatusById[tripKey]
-
-                        return (
-                          <div key={tripKey} className="trip-card">
+                      <div className="trip-type-filter">
+                        <p className="trip-type-filter__label">Filter by trip type</p>
+                        <div className="trip-type-filter__chips">
+                          {TRIP_TYPES.map((tripType) => (
                             <button
+                              key={tripType}
                               type="button"
-                              className="trip-card__header trip-card__toggle"
-                              onClick={() =>
-                                setExpandedTripId((curr) =>
-                                  curr === tripKey ? null : tripKey,
-                                )
-                              }
-                              aria-expanded={isExpanded}
+                              className={`trip-type-chip ${
+                                activeTripType === tripType ? 'trip-type-chip--active' : ''
+                              }`}
+                              disabled={isLoadingTrips}
+                              onClick={() => getTrips(tripType)}
                             >
-                              <h3 className="trip-card__title">{trip.trip_type} Trip</h3>
-                              <div className="trip-card__meta">
-                                <span>
-                                  Trip price:{' '}
-                                  <strong>
-                                    ${trip.budget_usd ?? trip.activities_total_usd ?? 0}
-                                  </strong>
-                                </span>
-                                <span className="trip-card__chevron" aria-hidden="true">
-                                  {isExpanded ? '▲' : '▼'}
-                                </span>
-                              </div>
+                              {tripType}
                             </button>
+                          ))}
+                        </div>
+                      </div>
 
-                            <div className="trip-activity-grid">
-                              {(trip.activities ?? []).slice(0, 3).map((act) => (
-                                <div key={act.id} className="trip-activity-tile">
-                                  <img
-                                    className="trip-activity-tile__img"
-                                    src={getActivityImageUrl(act)}
-                                    alt={act.name ?? act.id ?? 'Activity'}
-                                    loading="lazy"
-                                  />
-                                  <div className="trip-activity-tile__text">
-                                    Before going to <strong>{act.name ?? act.id}</strong>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
+                      {tripsForCountry.length === 0 ? (
+                        <p className="selection-message selection-message--muted">
+                          No {activeTripType.toLowerCase()} trips found yet for this country.
+                        </p>
+                      ) : (
+                        <>
+                          {tripsForCountry.map((trip, index) => {
+                            const tripKey = getTripKey(trip, index)
+                            const isExpanded = expandedTripId === tripKey
+                            const saveStatus = saveTripStatusById[tripKey]
+                            const purchaseStatus = purchaseTripStatusById[tripKey]
 
-                            {isExpanded && (
-                              <div className="trip-card__details">
-                                <div className="trip-details-grid">
-                                  <div>
-                                    <div className="trip-detail-label">Location</div>
-                                    <div className="trip-detail-value">
-                                      {trip.location ?? selectedCountry}
-                                    </div>
+                            return (
+                              <div key={tripKey} className="trip-card">
+                                <button
+                                  type="button"
+                                  className="trip-card__header trip-card__toggle"
+                                  onClick={() =>
+                                    setExpandedTripId((curr) =>
+                                      curr === tripKey ? null : tripKey,
+                                    )
+                                  }
+                                  aria-expanded={isExpanded}
+                                >
+                                  <h3 className="trip-card__title">{trip.trip_type} Trip</h3>
+                                  <div className="trip-card__meta">
+                                    <span>
+                                      Trip price:{' '}
+                                      <strong>
+                                        ${trip.budget_usd ?? trip.activities_total_usd ?? 0}
+                                      </strong>
+                                    </span>
+                                    <span className="trip-card__chevron" aria-hidden="true">
+                                      {isExpanded ? '▲' : '▼'}
+                                    </span>
                                   </div>
-                                  <div>
-                                    <div className="trip-detail-label">Season</div>
-                                    <div className="trip-detail-value">
-                                      {trip.season ?? '—'}
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="trip-detail-label">Total activities</div>
-                                    <div className="trip-detail-value">
-                                      {(trip.activities ?? []).length}
-                                    </div>
-                                  </div>
-                                  <div>
-                                    <div className="trip-detail-label">Total activity cost</div>
-                                    <div className="trip-detail-value">
-                                      ${trip.activities_total_usd ?? 0}
-                                    </div>
-                                  </div>
-                                </div>
+                                </button>
 
-                                <h4 className="trip-details-title">Experiences</h4>
-                                <div className="trip-details-activities">
-                                  {(trip.activities ?? []).map((act) => (
-                                    <div key={act.id} className="trip-details-activity">
+                                <div className="trip-activity-grid">
+                                  {(trip.activities ?? []).slice(0, 3).map((act) => (
+                                    <div key={act.id} className="trip-activity-tile">
                                       <img
-                                        className="trip-details-activity__img"
+                                        className="trip-activity-tile__img"
                                         src={getActivityImageUrl(act)}
                                         alt={act.name ?? act.id ?? 'Activity'}
                                         loading="lazy"
                                       />
-                                      <div className="trip-details-activity__info">
-                                        <div className="trip-details-activity__name">
-                                          {act.name ?? act.id}
-                                        </div>
-                                        <div className="trip-details-activity__price">
-                                          ${act.price_USD ?? 0}
-                                        </div>
+                                      <div className="trip-activity-tile__text">
+                                        Before going to <strong>{act.name ?? act.id}</strong>
                                       </div>
                                     </div>
                                   ))}
                                 </div>
 
-                                <div className="trip-card__actions">
-                                  {isLoggedIn && (
-                                    <button
-                                      type="button"
-                                      className="save-trip-button"
-                                      disabled={saveStatus === 'saving' || saveStatus === 'saved'}
-                                      onClick={(e) => {
-                                        e.stopPropagation()
-                                        saveTrip(trip)
-                                      }}
-                                    >
-                                      {getSaveTripLabel(trip)}
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    className="purchase-button"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      buyTrip(trip)
-                                      console.log('Purchase trip', trip._id)
-                                    }}
-                                  >
-                                    Purchase this trip
-                                  </button>
-                                </div>
+                                {isExpanded && (
+                                  <div className="trip-card__details">
+                                    <div className="trip-details-grid">
+                                      <div>
+                                        <div className="trip-detail-label">Location</div>
+                                        <div className="trip-detail-value">
+                                          {trip.location ?? selectedCountry}
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <div className="trip-detail-label">Season</div>
+                                        <div className="trip-detail-value">
+                                          {trip.season ?? '—'}
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <div className="trip-detail-label">Total activities</div>
+                                        <div className="trip-detail-value">
+                                          {(trip.activities ?? []).length}
+                                        </div>
+                                      </div>
+                                      <div>
+                                        <div className="trip-detail-label">Total activity cost</div>
+                                        <div className="trip-detail-value">
+                                          ${trip.activities_total_usd ?? 0}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <h4 className="trip-details-title">Experiences</h4>
+                                    <div className="trip-details-activities">
+                                      {(trip.activities ?? []).map((act) => (
+                                        <div key={act.id} className="trip-details-activity">
+                                          <img
+                                            className="trip-details-activity__img"
+                                            src={getActivityImageUrl(act)}
+                                            alt={act.name ?? act.id ?? 'Activity'}
+                                            loading="lazy"
+                                          />
+                                          <div className="trip-details-activity__info">
+                                            <div className="trip-details-activity__name">
+                                              {act.name ?? act.id}
+                                            </div>
+                                            <div className="trip-details-activity__price">
+                                              ${act.price_USD ?? 0}
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+
+                                    <div className="trip-card__actions">
+                                      {isLoggedIn && (
+                                        <button
+                                          type="button"
+                                          className="save-trip-button"
+                                          disabled={saveStatus === 'saving' || saveStatus === 'saved'}
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            saveTrip(trip, tripKey)
+                                          }}
+                                        >
+                                          {getSaveTripLabel(trip, tripKey)}
+                                        </button>
+                                      )}
+                                      <button
+                                        type="button"
+                                        className="purchase-button"
+                                        disabled={purchaseStatus === 'saving'}
+                                        onClick={(e) => {
+                                          e.stopPropagation()
+                                          buyTrip(trip, tripKey)
+                                          console.log('Purchase trip', trip._id)
+                                        }}
+                                      >
+                                        {getPurchaseTripLabel(trip, tripKey)}
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        )
-                      })}
+                            )
+                          })}
+                        </>
+                      )}
                     </div>
                   )}
                 </div>

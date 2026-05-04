@@ -1,0 +1,48 @@
+<head>
+    <!-- Essential JS 2 Script -->
+    <script src="https://cdn.syncfusion.com/ej2/31.2.2/dist/ej2.min.js"></script>
+    <script src="https://cdn.syncfusion.com/ej2/syncfusion-helper.js"></script>
+</head>
+<body>
+    <div id="PdfViewer" style="height:580px;width:100%;">
+        <button id="highlight">
+            Add TextMarkup annotation programmatically
+        </button>
+
+    </div>
+    <script>
+        // Initialize PDF Viewer
+        var pdfviewer = new ej.pdfviewer.PdfViewer({
+            documentPath: 'https://cdn.syncfusion.com/content/pdf/pdf-succinctly.pdf',
+            resourceUrl: 'https://cdn.syncfusion.com/ej2/31.2.2/dist/ej2-pdfviewer-lib'
+        });
+        
+        let highlight = document.getElementById('highlight');
+        if (highlight) {
+            highlight.addEventListener('click', function () {
+                if (pdfviewer) {
+                    pdfviewer.annotation.addAnnotation("Highlight", {
+                        bounds: [{ x: 97, y: 250, width: 350, height: 14 }],
+                        pageNumber: 3
+                    });
+                }
+            });
+        }
+        // Inject required modules
+        ej.pdfviewer.PdfViewer.Inject(
+            ej.pdfviewer.TextSelection,
+            ej.pdfviewer.TextSearch,
+            ej.pdfviewer.Print,
+            ej.pdfviewer.Navigation,
+            ej.pdfviewer.Toolbar,
+            ej.pdfviewer.Magnification,
+            ej.pdfviewer.Annotation,
+            ej.pdfviewer.FormDesigner,
+            ej.pdfviewer.FormFields,
+            ej.pdfviewer.PageOrganizer
+        );
+
+        // Render PDF Viewer
+        pdfviewer.appendTo('#PdfViewer');
+    </script>
+</body>

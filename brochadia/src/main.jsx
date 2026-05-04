@@ -9,5 +9,6 @@ createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <App />
     </BrowserRouter>
+    <script src="https://documentcloud.adobe.com/view-sdk/main.js"></script>
   </StrictMode>,
 )

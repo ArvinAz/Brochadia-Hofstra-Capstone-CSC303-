@@ -7,6 +7,26 @@
   margin-bottom: 2rem;
 }
 
+.saved-trips-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1rem;
+  padding: 0.75rem 1.05rem;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 128, 96, 0.35);
+  background: #1fb870;
+  color: #ffffff;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: var(--shadow-card);
+}
+
+.saved-trips-link-button:hover {
+  filter: brightness(0.97);
+  transform: translateY(-1px);
+}
+
 .saved-trips-list {
   display: grid;
   gap: 1rem;

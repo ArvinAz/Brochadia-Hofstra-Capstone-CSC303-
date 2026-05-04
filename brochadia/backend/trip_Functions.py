@@ -14,7 +14,9 @@ from geopy.geocoders import Nominatim
 from swarm import Swarm, Agent
 import json
 import ast
-
+import geopandas as gpd
+import random
+from shapely.geometry import Point
 
 
 
@@ -146,6 +148,89 @@ def extract_experiences(mongo_doc):
         return []
 
 #For Existing Trips
+
+
+def get_random_coordinates(country_name, num_points=3):
+    """
+    Generates random (latitude, longitude) pairs within a specified country.
+    """
+    # 1. Load the built-in low-resolution world map from geopandas
+    # Note: Depending on your geopandas version, you may see a deprecation warning 
+    # for get_path, but it remains the standard built-in dataset for this purpose.
+    url = "https://naciscdn.org/naturalearth/110m/cultural/ne_110m_admin_0_countries.zip"
+    world = gpd.read_file(url)
+
+    # 2. Filter the dataset for the requested country
+    country_data = world[world['NAME'] == country_name]
+
+    if country_data.empty:
+        raise ValueError(f"Country '{country_name}' not found. Please check your spelling (e.g., 'United States of America' instead of 'USA').")
+
+    # 3. Extract the geometry (Polygon or MultiPolygon) for the country
+    country_geom = country_data.geometry.iloc[0]
+
+    # 4. Get the bounding box coordinates of the country (min_lon, min_lat, max_lon, max_lat)
+    minx, miny, maxx, maxy = country_geom.bounds
+
+    valid_points = []
+    
+    print(f"Generating {num_points} points inside {country_name}...")
+
+    # 5. Loop until we find the requested number of valid points
+    while len(valid_points) < num_points:
+        # Generate a random longitude (x) and latitude (y) within the bounding box
+        random_lon = random.uniform(minx, maxx)
+        random_lat = random.uniform(miny, maxy)
+        
+        # Create a Shapely Point object
+        point = Point(random_lon, random_lat)
+
+        # 6. Check if the randomly generated point is actually inside the country's borders
+        if country_geom.contains(point):
+            # Append as (Latitude, Longitude)
+            valid_points.append((random_lat, random_lon))
+
+    return valid_points
+
+
+
+def single_userPref_score(user_dict, trip_activity, feature_name="shortDescription"):
+    """
+    Calculates a total score based on the occurrence of dictionary words within 
+    a single trip object.
+    
+    Args:
+        user_dict (dict): A dictionary where keys are words and values are ints (-1 to 1).
+        trip_activity (dict/obj): A single object containing the string feature.
+        feature_name (str): The attribute or key name to check.
+        
+    Returns:
+        int: The total calculated score for this single object.
+    """
+    total_score = 0
+    
+    # 1. Extract the string feature from the single object
+    if isinstance(trip_activity, dict):
+        text = trip_activity.get(feature_name, "")
+    else:
+        text = getattr(trip_activity, feature_name, "")
+        
+    # 2. Ensure the feature is a string before processing
+    if not isinstance(text, str):
+        return 0
+        
+    # 3. Process the text and calculate score
+    words = text.lower().split()
+    for word in words:
+        # Strip basic punctuation
+        clean_word = word.strip(".,!?\"'()[]{}")
+        
+        # Add value to total if word exists in user preference dictionary
+        if clean_word in user_dict:
+            total_score += user_dict[clean_word]
+    
+    return total_score
+
 def calculate_userPref_score(user_dict, trip_Activities, feature_name="text"):
     """
     Calculates a total score based on the occurrence of dictionary words within a list of objects.
@@ -161,7 +246,7 @@ def calculate_userPref_score(user_dict, trip_Activities, feature_name="text"):
     total_score = 0
     for obj in trip_Activities:
         # Extract the string feature whether the object is a dictionary or a class instance
-
+        print(obj.get("shortDescription", ""))
         if isinstance(obj, dict):
             text = obj.get("shortDescription", "")
         else:
@@ -178,8 +263,8 @@ def calculate_userPref_score(user_dict, trip_Activities, feature_name="text"):
             clean_word = word.strip(".,!?\"'()[]{}")
             
             # If the cleaned word is in our dictionary, add its value to the total score
-            print("USER DICT",user_dict)
-            print(clean_word in user_dict)
+            
+            
             if clean_word in user_dict:
                 total_score += user_dict[clean_word]
     
@@ -231,7 +316,7 @@ def latLong_Agent(country):
     selector_agent = Agent(
     name="Country Location Selector",
     instructions=(
-            "You are a travel curator. pick at most 3 random longitude and latitude pairs "
+            "You are a travel curator. pick  3 random longitude and latitude pairs "
             "that is within the location_input variable, whether its a country, city, Lake, or Mountain Range. Return ONLY "
             "a JSON array of subarrays of each pairs taken from the input string with float data type. Each subarray must have"
             "first element be the latitude and the second one being longitude."
