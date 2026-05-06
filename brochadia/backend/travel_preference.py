@@ -173,7 +173,7 @@ def analyze_text(text, user_pref=None, country_Pref=None):
     tagged_words = word_tokenize(text)
     tagged_words = nltk.pos_tag(tagged_words)
     for word, tag in tagged_words:
-        if tag.startswith('NN'):
+        if tag.startswith('NN') or tag.startswith('NNS') or tag.startswith('VBG') or tag.startswith("VB"):
             check_word(word, text, user_pref)
 
     
