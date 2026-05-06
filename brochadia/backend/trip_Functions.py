@@ -17,7 +17,9 @@ import ast
 import geopandas as gpd
 import random
 from shapely.geometry import Point
-
+from nltk.stem import PorterStemmer
+import spacy
+import lemminflect
 
 
 load_dotenv(Path(__file__).resolve().parent.parent / '.env')
@@ -26,6 +28,7 @@ MONGO_PASSWORD = os.getenv("VITE_MONGO_PASSWORD")
 AMA_KEY = os.getenv("VITE_AMA_API_KEY")
 AMA_SEC = os.getenv("VITE_AMA_API_SEC")
 
+nlp = spacy.load('en_core_web_sm')
 
 geoApp = Nominatim(user_agent="tutorial")
 USD_EXCHANGE_RATES = {
@@ -207,6 +210,8 @@ def single_userPref_score(user_dict, trip_activity, feature_name="shortDescripti
     Returns:
         int: The total calculated score for this single object.
     """
+    stemmer = PorterStemmer()
+    
     total_score = 0
     
     # 1. Extract the string feature from the single object
@@ -228,6 +233,23 @@ def single_userPref_score(user_dict, trip_activity, feature_name="shortDescripti
         # Add value to total if word exists in user preference dictionary
         if clean_word in user_dict:
             total_score += user_dict[clean_word]
+            continue
+        try:
+            if stemmer.stem(clean_word) in user_dict:
+                total_score += user_dict[clean_word]
+                continue
+        except Exception as e:
+            print("Error in stemming:", e)
+            pass
+        
+        try:
+            stemmed_word = stemmer.stem(clean_word)
+            if lemminflect.getInflection(stemmed_word, tag="VBG")[0] in user_dict or lemminflect.getInflection(stemmed_word, tag="VBD")[0] in user_dict:
+                total_score += user_dict[clean_word]
+                continue
+        except Exception as e:
+            print("Error in lemmatization:", e)
+            pass    
     
     return total_score
 
@@ -244,6 +266,8 @@ def calculate_userPref_score(user_dict, trip_Activities, feature_name="text"):
         int: The total calculated score.
     """
     total_score = 0
+    stemmer = PorterStemmer()
+    
     for obj in trip_Activities:
         # Extract the string feature whether the object is a dictionary or a class instance
         print(obj.get("shortDescription", ""))
@@ -262,11 +286,20 @@ def calculate_userPref_score(user_dict, trip_Activities, feature_name="text"):
             # Strip basic punctuation to ensure "word," or "word!" matches "word" in the dict
             clean_word = word.strip(".,!?\"'()[]{}")
             
-            # If the cleaned word is in our dictionary, add its value to the total score
+            
             
             
             if clean_word in user_dict:
                 total_score += user_dict[clean_word]
+            try:
+                if stemmer.stem(clean_word) in user_dict:
+                    total_score += user_dict[clean_word]
+                stemmed_word = stemmer.stem(clean_word)
+                if lemminflect.getInflection(stemmed_word, tag="VBG")[0] in user_dict or lemminflect.getInflection(stemmed_word, tag="VBD")[0] in user_dict:
+                    total_score += user_dict[clean_word]
+            except Exception as e:
+                print("Error in lemmatization:", e)
+                pass
     
     return total_score
 
